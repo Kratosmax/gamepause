@@ -1,6 +1,6 @@
 # Game Pause
 
-Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.0.0**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
+Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.1.0**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
 
 本项目只面向单机游戏或明确可暂停的本地进程，不注入游戏、不修改游戏内存数据，也不尝试绕过反作弊。
 
@@ -51,6 +51,8 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 
 - 自定义暂停/恢复快捷键和紧急恢复快捷键；保存前通过 Windows 全局热键注册结果检查冲突。
 - 开机启动及静默进入托盘。启用后会创建最高权限的 Windows 登录计划任务 `GamePause.AutoStart`。
+- 多条 GitHub 加速地址及优先级。内置的“GitHub 直连”线路不可删除，也可单独设为 `0` 禁用；线路按优先级从 10 到 1 依次尝试，同优先级保持列表顺序。
+- 可选的 HTTP 网络代理。它与 GitHub 加速地址相互独立，并同时作用于更新清单和安装包下载；当前不保存代理账号或密码。
 - 当前版本号、后台自动检查更新和手动检查更新入口。
 
 启用开机启动后不要移动程序目录；如需移动，请先关闭开机启动，移动后再重新启用。
@@ -77,7 +79,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 | --- | --- |
 | `profiles.json` | 游戏收藏、路径、暂停模式和自动规则 |
 | `settings.json` | 自定义快捷键 |
-| `ui-settings.json` | 关闭到托盘提醒、跳过的更新版本等界面偏好 |
+| `ui-settings.json` | 关闭到托盘提醒、跳过的更新版本、GitHub 加速线路及 HTTP 网络代理 |
 | `active-session.json` | 当前暂停目标的恢复记录，全部恢复后删除 |
 | `active-session.json.tmp` | 恢复记录写入过程中的临时文件 |
 | `active-session.json.bak` | 恢复记录的冗余备份 |
@@ -149,11 +151,11 @@ dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 ```
 
-输出目录为 `temp\release\GamePause-1.0.0\`，同时生成更新 ZIP 和系统安装包。发布目录中的三个可执行程序必须一起分发。
+输出目录为 `temp\release\GamePause-1.1.0\`，同时生成更新 ZIP 和系统安装包。发布目录中的三个可执行程序必须一起分发。
 
 ### 发布与自动更新
 
-推送与项目版本一致的标签（例如 `v1.0.0`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成自包含 Windows x64 程序、编译安装包、签名 `latest.json`，并创建 GitHub Release。
+推送与项目版本一致的标签（例如 `v1.1.0`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成自包含 Windows x64 程序、编译安装包、签名 `latest.json`，并创建 GitHub Release。
 
 仓库必须配置 Actions Secret `GAMEPAUSE_UPDATE_PRIVATE_KEY`。它保存与客户端内置公钥对应的 RSA 私钥；不得写入源码、日志或 Release 资产。更新清单固定发布为：
 

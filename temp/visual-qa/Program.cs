@@ -46,13 +46,25 @@ internal static class Program
         Render(profileWindow, Path.Combine(outputDirectory, "game-profile-window-wpf.png"), 520, 610);
         profileWindow.Close();
 
-        var settingsWindow = new HotkeySettingsWindow(HotkeySettings.Default, true, "1.0.0");
+        var settingsWindow = new HotkeySettingsWindow(
+            HotkeySettings.Default,
+            true,
+            "1.1.0",
+            new UpdateNetworkSettings([
+                new GithubProxySetting(string.Empty, 8, true),
+                new GithubProxySetting("https://gh-proxy.org", 10),
+                new GithubProxySetting("https://example.com/github", 5)
+            ], "http://127.0.0.1:7890"));
         settingsWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-        Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf.png"), 520, 515);
+        Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-general-wpf.png"), 720, 610);
+        settingsWindow.ShowNetworkSettingsForVisualQa();
+        application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf.png"), 720, 610);
+        Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf-minimum.png"), 680, 610);
         settingsWindow.Close();
 
-        var updateWindow = new UpdatePromptWindow("1.0.0", "1.1.0",
+        var updateWindow = new UpdatePromptWindow("1.1.0", "1.2.0",
             "新增自动更新支持。\n修复进程暂停恢复稳定性问题。");
         updateWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
@@ -72,10 +84,64 @@ internal static class Program
         {
             var store = new UiSettingsStore(directory);
             if (store.Load().CloseToTrayNoticeShown) throw new InvalidOperationException("Default preference must be false.");
-            store.Save(new UiSettings(true, "1.2.3"));
+            if (!store.Save(new UiSettings(true, "1.2.3")))
+                throw new InvalidOperationException("UI settings could not be saved.");
             var reloaded = new UiSettingsStore(directory).Load();
             if (!reloaded.CloseToTrayNoticeShown) throw new InvalidOperationException("Saved preference was not reloaded.");
             if (reloaded.SkippedUpdateVersion != "1.2.3") throw new InvalidOperationException("Skipped update version was not reloaded.");
+
+            var networkSettings = new UpdateNetworkSettings([
+                new GithubProxySetting("https://proxy-a.example", 10),
+                new GithubProxySetting(string.Empty, 8, true),
+                new GithubProxySetting("https://proxy-b.example/base/", 5),
+                new GithubProxySetting("https://disabled.example", 0)
+            ], "http://127.0.0.1:7890");
+            if (!store.Save(new UiSettings(true, "1.2.3", networkSettings)))
+                throw new InvalidOperationException("Network settings could not be saved.");
+            var savedNetwork = new UiSettingsStore(directory).Load().EffectiveUpdateNetwork;
+            if (savedNetwork.HttpProxy != "http://127.0.0.1:7890")
+                throw new InvalidOperationException("HTTP proxy was not reloaded.");
+            if (savedNetwork.GithubProxies?.Count != 4
+                || savedNetwork.GithubProxies.Single(item => item.IsDirect).Priority != 8)
+                throw new InvalidOperationException("GitHub routes were not reloaded.");
+
+            var urls = UpdateService.BuildRequestUrls(UpdateService.ManifestUrl, savedNetwork);
+            var expectedUrls = new[]
+            {
+                $"https://proxy-a.example/{UpdateService.ManifestUrl}",
+                UpdateService.ManifestUrl,
+                $"https://proxy-b.example/base/{UpdateService.ManifestUrl}"
+            };
+            if (!urls.SequenceEqual(expectedUrls))
+                throw new InvalidOperationException("GitHub route ordering or disabled-route handling is incorrect.");
+            const string nonGithubUrl = "https://example.org/latest.json";
+            if (!UpdateService.BuildRequestUrls(nonGithubUrl, savedNetwork).SequenceEqual([nonGithubUrl]))
+                throw new InvalidOperationException("A non-GitHub URL was rewritten.");
+
+            var normalizedWithoutDirect = new UpdateNetworkSettings([
+                new GithubProxySetting("https://proxy-only.example", 7)
+            ]).Normalize();
+            if (normalizedWithoutDirect.GithubProxies?.Count(item => item.IsDirect) != 1)
+                throw new InvalidOperationException("The permanent direct GitHub route was not restored.");
+            var allDisabled = new UpdateNetworkSettings([
+                new GithubProxySetting(string.Empty, 0, true),
+                new GithubProxySetting("https://disabled.example", 0)
+            ]);
+            if (UpdateService.BuildRequestUrls(UpdateService.ManifestUrl, allDisabled).Count != 0)
+                throw new InvalidOperationException("Disabled GitHub routes were used.");
+            if (UpdateNetworkSettings.TryNormalizeGithubProxy("https://user:pass@proxy.example", out _)
+                || UpdateNetworkSettings.TryNormalizeGithubProxy("https://proxy.example/?token=secret", out _)
+                || UpdateNetworkSettings.TryNormalizeHttpProxy("https://127.0.0.1:7890", out _))
+                throw new InvalidOperationException("Invalid or credential-bearing proxy settings were accepted.");
+
+            var legacyDirectory = Path.Combine(directory, "legacy");
+            Directory.CreateDirectory(legacyDirectory);
+            File.WriteAllText(Path.Combine(legacyDirectory, "ui-settings.json"),
+                "{\"CloseToTrayNoticeShown\":true,\"SkippedUpdateVersion\":\"1.0.1\"}");
+            var legacySettings = new UiSettingsStore(legacyDirectory).Load();
+            if (!legacySettings.CloseToTrayNoticeShown
+                || legacySettings.EffectiveUpdateNetwork.GithubProxies?.Single().IsDirect != true)
+                throw new InvalidOperationException("Legacy UI settings are not backward compatible.");
             var profileStore = new GameProfileStore(directory);
             profileStore.Save([
                 new GameProfile(Guid.NewGuid(), "Long Test Game", "test-game", "C:\\Games\\test-game.exe",

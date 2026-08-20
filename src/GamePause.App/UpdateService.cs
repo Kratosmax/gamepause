@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
@@ -24,77 +25,124 @@ internal static class UpdateService
     internal static bool IsSecureInstallLocation => IsUnderDirectory(AppContext.BaseDirectory,
         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
 
-    internal static async Task<UpdateManifest?> CheckAsync(CancellationToken cancellationToken = default)
+    internal static async Task<UpdateManifest?> CheckAsync(
+        UpdateNetworkSettings? networkSettings = null,
+        CancellationToken cancellationToken = default)
     {
-        using var client = CreateClient();
-        using var response = await client.GetAsync(ManifestUrl, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        var manifest = await JsonSerializer.DeserializeAsync<UpdateManifest>(stream,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }, cancellationToken);
-        if (manifest is null
-            || string.IsNullOrWhiteSpace(manifest.Version)
-            || string.IsNullOrWhiteSpace(manifest.DownloadUrl)
-            || string.IsNullOrWhiteSpace(manifest.Sha256)
-            || string.IsNullOrWhiteSpace(manifest.Signature)
-            || !UpdateVersionPolicy.IsNewer(manifest.Version, CurrentVersion)
-            || !IsHttpUrl(manifest.DownloadUrl)
-            || manifest.Sha256.Length != 64
-            || !manifest.Sha256.All(Uri.IsHexDigit))
+        var settings = (networkSettings ?? UpdateNetworkSettings.Default).Normalize();
+        using var client = CreateClient(settings);
+        Exception? lastError = null;
+        var receivedValidCurrentManifest = false;
+
+        foreach (var requestUrl in BuildRequestUrls(ManifestUrl, settings))
         {
-            return null;
+            try
+            {
+                using var response = await client.GetAsync(requestUrl, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastError = CreateStatusException(requestUrl, response.StatusCode);
+                    continue;
+                }
+
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                var manifest = await JsonSerializer.DeserializeAsync<UpdateManifest>(stream,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }, cancellationToken);
+                if (!IsStructurallyValid(manifest))
+                {
+                    lastError = new InvalidDataException($"更新服务器返回的清单格式无效：{requestUrl}");
+                    continue;
+                }
+                if (!UpdateManifestSecurity.Verify(manifest!.Version, manifest.DownloadUrl, manifest.Sha256, manifest.Signature))
+                {
+                    lastError = new InvalidDataException($"更新清单签名无效：{requestUrl}");
+                    continue;
+                }
+                if (UpdateVersionPolicy.IsNewer(manifest.Version, CurrentVersion)) return manifest;
+                receivedValidCurrentManifest = true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or JsonException)
+            {
+                lastError = exception;
+            }
         }
-        if (!UpdateManifestSecurity.Verify(manifest.Version, manifest.DownloadUrl, manifest.Sha256, manifest.Signature))
-        {
-            throw new InvalidDataException("更新清单签名无效。");
-        }
-        return manifest;
+
+        if (receivedValidCurrentManifest) return null;
+        throw lastError ?? new HttpRequestException("所有更新服务器均无法访问。");
     }
 
     internal static async Task<PreparedUpdate> DownloadAndPrepareAsync(
         UpdateManifest manifest,
+        UpdateNetworkSettings? networkSettings = null,
         CancellationToken cancellationToken = default)
     {
+        var settings = (networkSettings ?? UpdateNetworkSettings.Default).Normalize();
         var updateRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "GamePause", "updates", manifest.Version);
         var packagePath = Path.Combine(updateRoot, "package.zip");
         var temporaryPath = packagePath + ".tmp";
         Directory.CreateDirectory(updateRoot);
+        using var client = CreateClient(settings);
+        Exception? lastError = null;
 
-        using (var client = CreateClient())
-        using (var response = await client.GetAsync(manifest.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+        foreach (var requestUrl in BuildRequestUrls(manifest.DownloadUrl, settings))
         {
-            response.EnsureSuccessStatusCode();
-            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var destination = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await source.CopyToAsync(destination, cancellationToken);
-        }
-
-        var actualHash = await ComputeSha256Async(temporaryPath, cancellationToken);
-        if (!string.Equals(actualHash, manifest.Sha256, StringComparison.OrdinalIgnoreCase))
-        {
-            File.Delete(temporaryPath);
-            throw new InvalidDataException("下载文件的 SHA-256 校验失败。更新已取消。");
-        }
-
-        File.Move(temporaryPath, packagePath, true);
-        using (var archive = ZipFile.OpenRead(packagePath))
-        {
-            if (archive.GetEntry("GamePause.exe") is null
-                || archive.GetEntry("GamePause.dll") is null
-                || archive.GetEntry("GamePause.Updater.exe") is null)
+            try
             {
-                throw new InvalidDataException("更新包缺少主程序或更新器。");
+                using var response = await client.GetAsync(requestUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastError = CreateStatusException(requestUrl, response.StatusCode);
+                    continue;
+                }
+                await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
+                await using (var destination = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await source.CopyToAsync(destination, cancellationToken);
+                }
+
+                var actualHash = await ComputeSha256Async(temporaryPath, cancellationToken);
+                if (!string.Equals(actualHash, manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException($"下载文件的 SHA-256 校验失败：{requestUrl}");
+
+                ValidatePackage(temporaryPath, manifest.Version);
+                File.Move(temporaryPath, packagePath, true);
+                return new PreparedUpdate(manifest.Version, packagePath, manifest.Sha256,
+                    manifest.DownloadUrl, manifest.Signature);
             }
-            var packagedVersion = ReadAssemblyVersion(archive.GetEntry("GamePause.dll")!);
-            if (!Version.TryParse(manifest.Version.TrimStart('v', 'V'), out var expectedVersion)
-                || !SameReleaseVersion(packagedVersion, expectedVersion))
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw new InvalidDataException($"更新包版本 {packagedVersion} 与清单版本 {manifest.Version} 不一致。");
+                throw;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidDataException)
+            {
+                lastError = exception;
+                TryDelete(temporaryPath);
             }
         }
-        return new PreparedUpdate(manifest.Version, packagePath, manifest.Sha256, manifest.DownloadUrl, manifest.Signature);
+
+        throw lastError ?? new HttpRequestException("所有更新下载地址均无法访问。");
+    }
+
+    internal static IReadOnlyList<string> BuildRequestUrls(string originalUrl, UpdateNetworkSettings? networkSettings)
+    {
+        var settings = (networkSettings ?? UpdateNetworkSettings.Default).Normalize();
+        if (!Uri.TryCreate(originalUrl, UriKind.Absolute, out var originalUri)
+            || !string.Equals(originalUri.Host, "github.com", StringComparison.OrdinalIgnoreCase)) return [originalUrl];
+
+        var result = (settings.GithubProxies ?? [])
+            .Select((proxy, index) => new { Proxy = proxy, Index = index })
+            .Where(item => item.Proxy.Priority > 0)
+            .OrderByDescending(item => item.Proxy.Priority)
+            .ThenBy(item => item.Index)
+            .Select(item => item.Proxy.IsDirect ? originalUrl : $"{item.Proxy.BaseUrl}/{originalUrl}")
+            .ToList();
+        return result;
     }
 
     internal static bool LaunchUpdater(PreparedUpdate update)
@@ -133,12 +181,31 @@ internal static class UpdateService
         }
     }
 
-    private static HttpClient CreateClient()
+    private static HttpClient CreateClient(UpdateNetworkSettings settings)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+        var handler = new HttpClientHandler();
+        if (settings.HttpProxy is not null)
+        {
+            handler.Proxy = new WebProxy(settings.HttpProxy);
+            handler.UseProxy = true;
+        }
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(12) };
         client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GamePause", CurrentVersionText));
         return client;
     }
+
+    private static bool IsStructurallyValid(UpdateManifest? manifest) =>
+        manifest is not null
+        && !string.IsNullOrWhiteSpace(manifest.Version)
+        && !string.IsNullOrWhiteSpace(manifest.DownloadUrl)
+        && !string.IsNullOrWhiteSpace(manifest.Sha256)
+        && !string.IsNullOrWhiteSpace(manifest.Signature)
+        && IsHttpUrl(manifest.DownloadUrl)
+        && manifest.Sha256.Length == 64
+        && manifest.Sha256.All(Uri.IsHexDigit);
+
+    private static HttpRequestException CreateStatusException(string requestUrl, HttpStatusCode statusCode) =>
+        new($"更新服务器返回 HTTP {(int)statusCode}：{requestUrl}", null, statusCode);
 
     private static bool IsHttpUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme is "http" or "https";
@@ -158,6 +225,20 @@ internal static class UpdateService
         return Convert.ToHexString(hash);
     }
 
+    private static void ValidatePackage(string path, string version)
+    {
+        using var archive = ZipFile.OpenRead(path);
+        if (archive.GetEntry("GamePause.exe") is null
+            || archive.GetEntry("GamePause.dll") is null
+            || archive.GetEntry("GamePause.Updater.exe") is null)
+            throw new InvalidDataException("更新包缺少主程序或更新器。");
+
+        var packagedVersion = ReadAssemblyVersion(archive.GetEntry("GamePause.dll")!);
+        if (!Version.TryParse(version.TrimStart('v', 'V'), out var expectedVersion)
+            || !SameReleaseVersion(packagedVersion, expectedVersion))
+            throw new InvalidDataException($"更新包版本 {packagedVersion} 与清单版本 {version} 不一致。");
+    }
+
     private static Version ReadAssemblyVersion(ZipArchiveEntry entry)
     {
         using var stream = entry.Open();
@@ -168,4 +249,9 @@ internal static class UpdateService
 
     private static bool SameReleaseVersion(Version left, Version right) =>
         left.Major == right.Major && left.Minor == right.Minor && Math.Max(0, left.Build) == Math.Max(0, right.Build);
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
 }

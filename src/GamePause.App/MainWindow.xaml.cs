@@ -860,7 +860,8 @@ public partial class MainWindow : System.Windows.Window
             _hotkeySettings,
             startupEnabled,
             UpdateService.CurrentVersionText,
-            owner => CheckForUpdatesAsync(userInitiated: true, owner)) { Owner = this };
+            _uiSettings.EffectiveUpdateNetwork,
+            (owner, networkSettings) => CheckForUpdatesAsync(userInitiated: true, owner, networkSettings)) { Owner = this };
         if (dialog.ShowDialog() != true) return;
         if (!TryApplyHotkeySettings(dialog.SelectedSettings))
         {
@@ -881,6 +882,14 @@ public partial class MainWindow : System.Windows.Window
         }
         UpdateHotkeyLabel();
 
+        _uiSettings = _uiSettings with { UpdateNetwork = dialog.SelectedUpdateNetworkSettings };
+        if (!_uiSettingsStore.Save(_uiSettings))
+        {
+            WpfMessageBox.Show("网络与更新设置已在本次运行中生效，但无法写入 ui-settings.json。", "设置保存失败",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            SetStatus("部分设置无法保存到磁盘。", StateTone.Warning);
+        }
+
         if (dialog.StartupEnabled != startupEnabled)
         {
             var startupResult = await Task.Run(() => StartupTaskService.SetEnabled(dialog.StartupEnabled));
@@ -898,7 +907,10 @@ public partial class MainWindow : System.Windows.Window
         }
     }
 
-    private async Task CheckForUpdatesAsync(bool userInitiated, System.Windows.Window dialogOwner)
+    private async Task CheckForUpdatesAsync(
+        bool userInitiated,
+        System.Windows.Window dialogOwner,
+        UpdateNetworkSettings? networkSettings = null)
     {
         if (_updateCheckInProgress)
         {
@@ -913,10 +925,11 @@ public partial class MainWindow : System.Windows.Window
         _updateCheckInProgress = true;
         _manualUpdateCheckRequested = userInitiated;
         var updateAccepted = false;
+        var effectiveNetworkSettings = (networkSettings ?? _uiSettings.EffectiveUpdateNetwork).Normalize();
         try
         {
             if (userInitiated) SetStatus("正在检查更新...", StateTone.Neutral);
-            var update = await UpdateService.CheckAsync();
+            var update = await UpdateService.CheckAsync(effectiveNetworkSettings);
             var shouldReportResult = _manualUpdateCheckRequested;
             if (update is null)
             {
@@ -982,7 +995,7 @@ public partial class MainWindow : System.Windows.Window
             }
 
             SetStatus($"正在下载版本 {update.Version}...", StateTone.Neutral);
-            var package = await UpdateService.DownloadAndPrepareAsync(update);
+            var package = await UpdateService.DownloadAndPrepareAsync(update, effectiveNetworkSettings);
             if (!UpdateService.LaunchUpdater(package))
             {
                 SetStatus("无法启动自动更新器，更新已取消。", StateTone.Error);
