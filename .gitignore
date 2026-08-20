@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.vs/
+artifacts/
+temp/*
+!temp/visual-qa/
+!temp/visual-qa/Program.cs
+!temp/visual-qa/VisualQa.csproj
+*.user
+*.suo

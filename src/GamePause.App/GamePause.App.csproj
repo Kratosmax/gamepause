@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\game-pause.ico</ApplicationIcon>
+    <AssemblyName>GamePause</AssemblyName>
+    <RootNamespace>GamePause.App</RootNamespace>
+    <Version>0.9.1</Version>
+    <Authors>Game Pause</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GamePause.Core\GamePause.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="VisualQa" />
+  </ItemGroup>
+
+</Project>
