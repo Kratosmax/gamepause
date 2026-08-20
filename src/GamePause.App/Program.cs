@@ -10,6 +10,7 @@ static class Program
         startupStore.Log($"Administrator privileges: {ElevationService.IsAdministrator()}.");
 
         UpdaterMaintenance.TryComplete(args, startupStore);
+        UpdaterMaintenance.TryCleanupBackup(startupStore);
         if (!UpdateService.CleanupDownloadedPackages())
             startupStore.Log("Unable to remove downloaded update packages during startup cleanup.");
         AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>

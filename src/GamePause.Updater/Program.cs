@@ -171,10 +171,20 @@ internal static class Program
         var rollback = new RollbackPlan(installedFiles, backupDirectory);
         try
         {
-            foreach (var file in sourceFiles)
+            for (var index = 0; index < sourceFiles.Length; index++)
             {
+                var file = sourceFiles[index];
                 var target = ResolveTargetPath(targetDirectory, file.RelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                var installed = installedFiles[index];
+                installed.Started = true;
+                if (installed.Existed)
+                {
+                    var displaced = Path.Combine(backupDirectory, ".in-use", file.RelativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(displaced)!);
+                    File.Move(target, displaced, true);
+                    installed.DisplacedPath = displaced;
+                }
                 CopyEntryWithRetry(file.Entry, target);
             }
             return rollback;
@@ -298,6 +308,22 @@ internal static class Program
             if (File.ReadAllText(Path.Combine(directory, "existing.txt")) != "old"
                 || File.Exists(Path.Combine(directory, "added.txt"))) return 4;
 
+            var lockedPath = Path.Combine(directory, "locked.dll");
+            File.WriteAllText(lockedPath, "old-locked");
+            using (var lockedStream = new FileStream(
+                       lockedPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+            using (var lockedPackage = new MemoryStream())
+            {
+                using (var writer = new ZipArchive(lockedPackage, ZipArchiveMode.Create, leaveOpen: true))
+                    WriteTestEntry(writer, "locked.dll", "new-locked");
+                lockedPackage.Position = 0;
+                using var lockedArchive = new ZipArchive(lockedPackage, ZipArchiveMode.Read, leaveOpen: true);
+                var rollback = InstallWithRollback(lockedArchive, directory);
+                if (File.ReadAllText(lockedPath) != "new-locked") return 8;
+                rollback.RollBack();
+                if (File.ReadAllText(lockedPath) != "old-locked") return 9;
+            }
+
             using var maliciousPackage = new MemoryStream();
             using (var writer = new ZipArchive(maliciousPackage, ZipArchiveMode.Create, leaveOpen: true))
                 WriteTestEntry(writer, "../escape.txt", "blocked");
@@ -328,13 +354,21 @@ internal static class Program
     }
 
     private sealed record UpdateFile(ZipArchiveEntry Entry, string RelativePath);
-    private sealed record InstalledFile(string TargetPath, string BackupPath, bool Existed);
+    private sealed class InstalledFile(string targetPath, string backupPath, bool existed)
+    {
+        internal string TargetPath { get; } = targetPath;
+        internal string BackupPath { get; } = backupPath;
+        internal bool Existed { get; } = existed;
+        internal bool Started { get; set; }
+        internal string? DisplacedPath { get; set; }
+    }
 
     private sealed class RollbackPlan(IReadOnlyList<InstalledFile> files, string backupDirectory)
     {
         internal void Commit()
         {
-            try { Directory.Delete(backupDirectory, true); } catch (IOException) { }
+            // Loaded updater files remain mapped until this process exits. The
+            // restarted application removes the backup after replacing the apphost.
         }
 
         internal void RollBack()
@@ -342,10 +376,18 @@ internal static class Program
             var errors = new List<Exception>();
             foreach (var file in files)
             {
+                if (!file.Started) continue;
                 try
                 {
-                    if (file.Existed) CopyWithRetry(file.BackupPath, file.TargetPath);
-                    else File.Delete(file.TargetPath);
+                    File.Delete(file.TargetPath);
+                    if (file.DisplacedPath is not null && File.Exists(file.DisplacedPath))
+                    {
+                        MoveWithRetry(file.DisplacedPath, file.TargetPath);
+                    }
+                    else if (file.Existed)
+                    {
+                        CopyWithRetry(file.BackupPath, file.TargetPath);
+                    }
                 }
                 catch (Exception exception)
                 {
@@ -355,5 +397,24 @@ internal static class Program
             if (errors.Count > 0) throw new AggregateException("更新失败，且部分文件无法自动回滚。", errors);
             try { Directory.Delete(backupDirectory, true); } catch (IOException) { }
         }
+    }
+
+    private static void MoveWithRetry(string source, string target)
+    {
+        Exception? lastError = null;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                File.Move(source, target, true);
+                return;
+            }
+            catch (IOException exception)
+            {
+                lastError = exception;
+                Thread.Sleep(300);
+            }
+        }
+        throw new IOException($"无法恢复文件 {Path.GetFileName(target)}。", lastError);
     }
 }

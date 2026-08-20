@@ -38,6 +38,7 @@ internal static class UpdaterMaintenance
             source.Close();
             File.Delete(expectedPath);
             store.Log("Pending updater executable was installed successfully.");
+            TryCleanupBackup(store);
         }
         catch (Exception exception)
         {
@@ -46,6 +47,21 @@ internal static class UpdaterMaintenance
             {
                 try { File.Delete(expectedPath); } catch (Exception deleteException) when (deleteException is IOException or UnauthorizedAccessException) { }
             }
+        }
+    }
+
+    internal static void TryCleanupBackup(SessionStore store)
+    {
+        var backupDirectory = Path.Combine(AppContext.BaseDirectory, ".gamepause-update-backup");
+        try
+        {
+            if (!Directory.Exists(backupDirectory)) return;
+            Directory.Delete(backupDirectory, true);
+            store.Log("Update backup directory was cleaned successfully.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            store.Log($"Unable to clean update backup directory: {exception.Message}");
         }
     }
 
