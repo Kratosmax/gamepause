@@ -1,5 +1,7 @@
 using GamePause.Core;
 using System.Diagnostics;
+using System.IO.Compression;
+using System.Reflection;
 
 if (args.Contains("--memory-helper", StringComparer.Ordinal))
 {
@@ -39,6 +41,7 @@ var tests = new (string Name, Action Run)[]
     ("Automatic pause rule honors focus-loss delay", TestAutoRuleTracker),
     ("Update version policy accepts only newer semantic versions", TestUpdateVersionPolicy),
     ("Update manifests accept valid signatures and reject invalid signatures", TestUpdateManifestSignature),
+    ("Compressed assembly versions are read from non-seekable ZIP streams", TestCompressedAssemblyVersionRead),
     ("Diagnostic logs rotate before exceeding their size limit", TestDiagnosticLogRotation)
 };
 
@@ -371,6 +374,31 @@ static void TestUpdateManifestSignature()
         "An invalid update signature must be rejected.");
     Assert(!UpdateManifestSecurity.Verify("1.0.0", "https://example.com/GamePause.zip", new string('A', 64), "not-base64"),
         "Malformed signature data must be rejected.");
+}
+
+static void TestCompressedAssemblyVersionRead()
+{
+    using var package = new MemoryStream();
+    using (var archive = new ZipArchive(package, ZipArchiveMode.Create, leaveOpen: true))
+    {
+        var entry = archive.CreateEntry("GamePause.dll", CompressionLevel.Optimal);
+        using var source = File.OpenRead(Assembly.GetExecutingAssembly().Location);
+        using var destination = entry.Open();
+        source.CopyTo(destination);
+    }
+
+    package.Position = 0;
+    using var readArchive = new ZipArchive(package, ZipArchiveMode.Read);
+    using var compressedStream = readArchive.GetEntry("GamePause.dll")!.Open();
+    Assert(!compressedStream.CanSeek, "The regression fixture must expose a non-seekable ZIP entry stream.");
+    var actual = PortableExecutableVersionReader.ReadAssemblyVersion(compressedStream);
+    Assert(actual == Assembly.GetExecutingAssembly().GetName().Version,
+        $"Expected the packaged assembly version, got {actual}.");
+
+    using var oversized = new MemoryStream(new byte[33]);
+    AssertThrows<InvalidDataException>(
+        () => PortableExecutableVersionReader.ReadAssemblyVersion(oversized, 32),
+        "The PE buffering safety limit must be enforced.");
 }
 
 static void TestDiagnosticLogRotation()

@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Reflection.Metadata;
-using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using GamePause.Core;
 
@@ -249,8 +247,7 @@ internal static class Program
     {
         var entry = archive.GetEntry("GamePause.dll") ?? throw new InvalidDataException("更新包缺少 GamePause.dll。");
         using var stream = entry.Open();
-        using var peReader = new PEReader(stream);
-        var actual = peReader.GetMetadataReader().GetAssemblyDefinition().Version;
+        var actual = PortableExecutableVersionReader.ReadAssemblyVersion(stream);
         if (!Version.TryParse(version.TrimStart('v', 'V'), out var expected)
             || actual.Major != expected.Major
             || actual.Minor != expected.Minor

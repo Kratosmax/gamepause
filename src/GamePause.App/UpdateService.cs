@@ -4,8 +4,6 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
-using System.Reflection.Metadata;
-using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text.Json;
 using GamePause.Core;
@@ -324,9 +322,7 @@ internal static class UpdateService
     private static Version ReadAssemblyVersion(ZipArchiveEntry entry)
     {
         using var stream = entry.Open();
-        using var peReader = new PEReader(stream);
-        if (!peReader.HasMetadata) throw new InvalidDataException("更新包中的 GamePause.dll 没有程序集元数据。");
-        return peReader.GetMetadataReader().GetAssemblyDefinition().Version;
+        return PortableExecutableVersionReader.ReadAssemblyVersion(stream);
     }
 
     private static bool SameReleaseVersion(Version left, Version right) =>

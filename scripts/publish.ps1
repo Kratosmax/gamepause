@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '1.1.3',
+    [string]$Version = '1.1.4',
     [string]$Runtime = 'win-x64',
     [string]$RuntimePackageSource = 'https://api.nuget.org/v3/index.json',
     [switch]$SkipInstaller
