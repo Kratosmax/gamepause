@@ -11,7 +11,7 @@
     <ApplicationIcon>Assets\game-pause.ico</ApplicationIcon>
     <AssemblyName>GamePause</AssemblyName>
     <RootNamespace>GamePause.App</RootNamespace>
-    <Version>1.1.1</Version>
+    <Version>1.1.2</Version>
     <Authors>Game Pause</Authors>
   </PropertyGroup>
 

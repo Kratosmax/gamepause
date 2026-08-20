@@ -14,16 +14,15 @@ internal static class UpdaterMaintenance
             || !options.TryGetValue("--updater-owner", out var ownerText)
             || !int.TryParse(ownerText, out var ownerProcessId)) return;
 
-        var expectedPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "GamePause.Updater.next"));
-        if (!string.Equals(Path.GetFullPath(nextPath), expectedPath, StringComparison.OrdinalIgnoreCase)
-            || expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit))
-        {
-            store.Log("Pending updater completion rejected because its arguments were invalid.");
-            return;
-        }
-
+        string? expectedPath = null;
         try
         {
+            expectedPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "GamePause.Updater.next"));
+            if (!string.Equals(Path.GetFullPath(nextPath), expectedPath, StringComparison.OrdinalIgnoreCase)
+                || expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit)
+                || ownerProcessId <= 0)
+                throw new InvalidDataException("Pending updater completion arguments were invalid.");
+
             using var source = new FileStream(expectedPath, FileMode.Open, FileAccess.Read, FileShare.Read);
             var actualHash = Convert.ToHexString(SHA256.HashData(source));
             if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
@@ -40,9 +39,13 @@ internal static class UpdaterMaintenance
             File.Delete(expectedPath);
             store.Log("Pending updater executable was installed successfully.");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception exception)
         {
             store.Log($"Unable to complete updater replacement: {exception.Message}");
+            if (exception is InvalidDataException && expectedPath is not null)
+            {
+                try { File.Delete(expectedPath); } catch (Exception deleteException) when (deleteException is IOException or UnauthorizedAccessException) { }
+            }
         }
     }
 

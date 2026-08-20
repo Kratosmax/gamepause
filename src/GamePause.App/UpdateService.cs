@@ -17,8 +17,13 @@ internal sealed record PreparedUpdate(string Version, string PackagePath, string
 
 internal static class UpdateService
 {
-    internal const string ManifestUrl =
-        "https://github.com/Kratosmax/gamepause/releases/latest/download/latest.json";
+    internal const string DistributionChannelFileName = "distribution-channel.txt";
+    internal const string FullDistributionChannel = "full";
+    internal const string LiteDistributionChannel = "lite";
+    internal const long MaxPackageBytes = 512L * 1024 * 1024;
+    internal static readonly TimeSpan DownloadStallTimeout = TimeSpan.FromSeconds(30);
+    internal static string DistributionChannel => ReadDistributionChannel(AppContext.BaseDirectory);
+    internal static string ManifestUrl => GetManifestUrl(AppContext.BaseDirectory);
     private static readonly Version CurrentVersion = typeof(UpdateService).Assembly.GetName().Version ?? new Version(0, 0, 0);
 
     internal static string CurrentVersionText => $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{Math.Max(0, CurrentVersion.Build)}";
@@ -97,10 +102,13 @@ internal static class UpdateService
                     lastError = CreateStatusException(requestUrl, response.StatusCode);
                     continue;
                 }
+                if (response.Content.Headers.ContentLength is > MaxPackageBytes)
+                    throw new InvalidDataException($"更新包超过 {MaxPackageBytes / 1024 / 1024} MB 安全上限：{requestUrl}");
                 await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
                 await using (var destination = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
-                    await source.CopyToAsync(destination, cancellationToken);
+                    await CopyDownloadAsync(source, destination, MaxPackageBytes, DownloadStallTimeout, cancellationToken);
+                    await destination.FlushAsync(cancellationToken);
                 }
 
                 var actualHash = await ComputeSha256Async(temporaryPath, cancellationToken);
@@ -116,7 +124,8 @@ internal static class UpdateService
             {
                 throw;
             }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidDataException)
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException
+                                               or InvalidDataException or TimeoutException)
             {
                 lastError = exception;
                 TryDelete(temporaryPath);
@@ -140,6 +149,27 @@ internal static class UpdateService
             .Select(item => item.Proxy.IsDirect ? originalUrl : $"{item.Proxy.BaseUrl}/{originalUrl}")
             .ToList();
         return result;
+    }
+
+    internal static string ReadDistributionChannel(string baseDirectory)
+    {
+        try
+        {
+            var value = File.ReadAllText(Path.Combine(baseDirectory, DistributionChannelFileName)).Trim();
+            return string.Equals(value, LiteDistributionChannel, StringComparison.OrdinalIgnoreCase)
+                ? LiteDistributionChannel
+                : FullDistributionChannel;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return FullDistributionChannel;
+        }
+    }
+
+    internal static string GetManifestUrl(string baseDirectory)
+    {
+        var channel = ReadDistributionChannel(baseDirectory);
+        return $"https://github.com/Kratosmax/gamepause/releases/latest/download/latest-{channel}.json";
     }
 
     internal static bool LaunchUpdater(PreparedUpdate update)
@@ -173,6 +203,60 @@ internal static class UpdateService
             return Process.Start(startInfo) is not null;
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    internal static async Task CopyDownloadAsync(
+        Stream source,
+        Stream destination,
+        long maxBytes,
+        TimeSpan stallTimeout,
+        CancellationToken cancellationToken = default)
+    {
+        if (maxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        if (stallTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(stallTimeout));
+
+        var buffer = new byte[81920];
+        long totalBytes = 0;
+        using var stallCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        while (true)
+        {
+            stallCancellation.CancelAfter(stallTimeout);
+            int bytesRead;
+            try
+            {
+                bytesRead = await source.ReadAsync(buffer, stallCancellation.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"更新下载连续 {stallTimeout.TotalSeconds:N0} 秒没有收到数据。");
+            }
+            finally
+            {
+                stallCancellation.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
+
+            if (bytesRead == 0) break;
+            totalBytes = checked(totalBytes + bytesRead);
+            if (totalBytes > maxBytes)
+                throw new InvalidDataException($"更新包超过 {maxBytes / 1024 / 1024} MB 安全上限。");
+            await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+        }
+    }
+
+    internal static bool CleanupDownloadedPackages(string? updatesRoot = null)
+    {
+        updatesRoot ??= Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GamePause", "updates");
+        try
+        {
+            if (Directory.Exists(updatesRoot)) Directory.Delete(updatesRoot, true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             return false;
         }
@@ -221,6 +305,15 @@ internal static class UpdateService
             || archive.GetEntry("GamePause.dll") is null
             || archive.GetEntry("GamePause.Updater.exe") is null)
             throw new InvalidDataException("更新包缺少主程序或更新器。");
+
+        var channelEntry = archive.GetEntry(DistributionChannelFileName)
+            ?? throw new InvalidDataException("更新包缺少发行通道标记。");
+        using (var reader = new StreamReader(channelEntry.Open()))
+        {
+            var packageChannel = reader.ReadToEnd().Trim();
+            if (!string.Equals(packageChannel, DistributionChannel, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"更新包通道 {packageChannel} 与当前 {DistributionChannel} 版本不一致。");
+        }
 
         var packagedVersion = ReadAssemblyVersion(archive.GetEntry("GamePause.dll")!);
         if (!Version.TryParse(version.TrimStart('v', 'V'), out var expectedVersion)

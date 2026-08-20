@@ -3,7 +3,6 @@ using System.IO.Compression;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
-using System.Text;
 using GamePause.Core;
 
 namespace GamePause.Updater;
@@ -270,17 +269,10 @@ internal static class Program
 
     private static void Log(string message)
     {
-        try
-        {
-            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GamePause");
-            Directory.CreateDirectory(directory);
-            File.AppendAllText(Path.Combine(directory, "update.log"),
-                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}{Environment.NewLine}", Encoding.UTF8);
-        }
-        catch
-        {
-            // Updating must not fail only because the diagnostic log is unavailable.
-        }
+        var path = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GamePause", "update.log");
+        DiagnosticLog.Append(path, $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}");
     }
 
     private static int RunSelfTest()

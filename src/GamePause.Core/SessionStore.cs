@@ -142,17 +142,9 @@ public sealed class SessionStore
 
     public void Log(string message)
     {
-        try
-        {
-            Directory.CreateDirectory(DataDirectory);
-            File.AppendAllText(
-                LogFilePath,
-                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}{Environment.NewLine}");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            // Logging must never prevent an emergency resume.
-        }
+        DiagnosticLog.Append(
+            LogFilePath,
+            $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}");
     }
 
     private sealed record LegacySuspensionSession(

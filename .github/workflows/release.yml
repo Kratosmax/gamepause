@@ -47,19 +47,25 @@ jobs:
           $utf8NoBom = New-Object Text.UTF8Encoding($false)
           [IO.File]::WriteAllText($keyPath, $env:UPDATE_PRIVATE_KEY, $utf8NoBom)
           try {
-            ./scripts/New-UpdateManifest.ps1 `
-              -Version $env:RELEASE_VERSION `
-              -PackagePath "temp/release/GamePause-$env:RELEASE_VERSION.zip" `
-              -PrivateKeyPath $keyPath `
-              -ReleaseNotes "请查看 GitHub Release 中的版本说明。" `
-              -OutputPath 'temp/release/latest.json'
+            foreach ($channel in @('full', 'lite')) {
+              $flavor = (Get-Culture).TextInfo.ToTitleCase($channel)
+              ./scripts/New-UpdateManifest.ps1 `
+                -Version $env:RELEASE_VERSION `
+                -PackagePath "temp/release/GamePause-$env:RELEASE_VERSION-$flavor.zip" `
+                -PrivateKeyPath $keyPath `
+                -ReleaseNotes "请查看 GitHub Release 中的版本说明。" `
+                -OutputPath "temp/release/latest-$channel.json"
+            }
+            Copy-Item 'temp/release/latest-full.json' 'temp/release/latest.json'
           }
           finally {
             Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
           }
           $files = @(
-            "temp/release/GamePause-$env:RELEASE_VERSION.zip",
-            "temp/release/GamePause-$env:RELEASE_VERSION-Setup.exe"
+            "temp/release/GamePause-$env:RELEASE_VERSION-Full.zip",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Full-Setup.exe",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Lite.zip",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Lite-Setup.exe"
           )
           $checksums = foreach ($file in $files) {
             $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
@@ -73,9 +79,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = @(
-            "temp/release/GamePause-$env:RELEASE_VERSION-Setup.exe",
-            "temp/release/GamePause-$env:RELEASE_VERSION.zip",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Full-Setup.exe",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Full.zip",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Lite-Setup.exe",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Lite.zip",
             'temp/release/latest.json',
+            'temp/release/latest-full.json',
+            'temp/release/latest-lite.json',
             'temp/release/SHA256SUMS.txt'
           )
           $notesPath = "docs/releases/v$env:RELEASE_VERSION.md"

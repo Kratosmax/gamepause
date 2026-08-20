@@ -13,6 +13,15 @@ internal static class NativeMethods
     internal const int ThreadSuspendCount = 35;
     internal static readonly nint InvalidHandleValue = new(-1);
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct FileTime
+    {
+        internal uint LowDateTime;
+        internal uint HighDateTime;
+
+        internal long ToInt64() => (long)(((ulong)HighDateTime << 32) | LowDateTime);
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct ProcessEntry32
     {
@@ -52,6 +61,15 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(nint hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetProcessTimes(
+        nint hProcess,
+        out FileTime lpCreationTime,
+        out FileTime lpExitTime,
+        out FileTime lpKernelTime,
+        out FileTime lpUserTime);
 
     [DllImport("ntdll.dll")]
     internal static extern int NtSuspendProcess(nint processHandle);

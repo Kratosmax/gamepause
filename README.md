@@ -1,21 +1,35 @@
 # Game Pause
 
-Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.1.1**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
+Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.1.2**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
 
 本项目只面向单机游戏或明确可暂停的本地进程，不注入游戏、不修改游戏内存数据，也不尝试绕过反作弊。
+
+## 下载选择
+
+每个版本提供四种 Windows x64 发行包，功能相同：
+
+| 文件 | 适用场景 | 运行环境与语言资源 |
+| --- | --- | --- |
+| `GamePause-版本号-Full-Setup.exe` | 推荐给大多数用户 | 完整安装版，内置 .NET 8，保留全部 Microsoft 桌面运行时语言资源 |
+| `GamePause-版本号-Lite-Setup.exe` | 已安装 .NET 8、希望减小体积 | 精简安装版，需要 `.NET 8 Desktop Runtime x64`，不随包附带额外框架语言目录 |
+| `GamePause-版本号-Full.zip` | 免安装、解压即用 | 完整便携版，内置 .NET 8，保留全部 Microsoft 桌面运行时语言资源 |
+| `GamePause-版本号-Lite.zip` | 最小体积、免安装 | 精简便携版，需要 `.NET 8 Desktop Runtime x64`，不随包附带额外框架语言目录 |
+
+不确定时下载 `Full-Setup.exe`。使用 Lite 版的用户需要自行准备并安装 [.NET 8 Desktop Runtime x64](https://dotnet.microsoft.com/zh-cn/download/dotnet/8.0/runtime?cid=getdotnetcore&runtime=windowsdesktop)；Lite 安装器检测到环境缺失时会停止安装并再次提供该官方下载入口。Full 与 Lite 使用独立自动更新通道，不会在更新后互相转换；1.1.1 及更早版本默认归入 Full 通道。手动切换 Full/Lite 时应先卸载现有版本再安装另一版本，避免旧运行时 DLL 残留；用户档案位于 `%LocalAppData%\GamePause`，正常卸载不会删除。
 
 ## 使用说明
 
 ### 系统要求
 
 - Windows 10 或 Windows 11，64 位。
+- Lite 版要求系统已安装 `.NET 8 Desktop Runtime x64`；Full 版不需要单独安装运行库。
 - 主程序需要管理员权限，以操作同等或较低权限的目标进程。
 - Windows 11 22H2 及以上可显示完整系统背景材质；Windows 10 自动使用浅色回退主题。
 
 ### 启动程序
 
-1. 推荐从 [GitHub Releases](https://github.com/Kratosmax/gamepause/releases) 下载 `GamePause-版本号-Setup.exe` 并安装。安装版支持自动更新。
-2. 也可以下载 ZIP 免安装版并完整解压；保持 `GamePause.exe`、`GamePause.Watchdog.exe` 和 `GamePause.Updater.exe` 位于同一目录。1.1.1 起安装版和免安装版均可自动更新。
+1. 推荐从 [GitHub Releases](https://github.com/Kratosmax/gamepause/releases) 按上表选择 Full 或 Lite 安装版。两种安装版均支持自动更新。
+2. 也可以下载对应 ZIP 免安装版并完整解压；保持 `GamePause.exe`、`GamePause.Watchdog.exe`、`GamePause.Updater.exe` 和 `distribution-channel.txt` 位于同一目录。1.1.1 起安装版和免安装版均可自动更新。
 3. 启动 `GamePause.exe`，在系统提示时允许管理员权限。
 4. 程序只允许一个实例运行。重复启动时会提示检查系统托盘并退出。
 
@@ -67,7 +81,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 
 ### 异常退出保护
 
-当前暂停状态会写入恢复记录。程序再次启动时会核验 PID、进程启动时间和线程挂起计数，避免因 PID 复用而恢复错误进程。主程序异常退出后，独立守护进程也会读取记录并尝试恢复。
+当前暂停状态会写入恢复记录。暂停和恢复都会在同一个 Windows 进程句柄上核验 PID 与启动时间，程序再次启动时还会检查线程挂起计数，避免因 PID 复用而操作错误进程。主程序异常退出后，独立守护进程也会读取记录并尝试恢复。
 
 有目标仍处于暂停状态时退出程序，会询问是否全部恢复；拒绝恢复会取消退出。
 
@@ -78,6 +92,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 | 文件或目录 | 用途 |
 | --- | --- |
 | `profiles.json` | 游戏收藏、路径、暂停模式和自动规则 |
+| `profiles.json.bak` | 游戏档案冗余备份，主文件损坏时自动读取 |
 | `settings.json` | 自定义快捷键 |
 | `ui-settings.json` | 关闭到托盘提醒、跳过的更新版本、GitHub 加速线路及 HTTP 网络代理 |
 | `active-session.json` | 当前暂停目标的恢复记录，全部恢复后删除 |
@@ -87,7 +102,9 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 | `update.log` | 独立更新器日志 |
 | `updates\` | 已下载并校验的更新临时文件 |
 
-开机启动配置不在 JSON 文件中，而在 Windows 任务计划程序的 `GamePause.AutoStart` 任务中。
+日志超过 5 MB 时会轮转为同名 `.old` 文件。已下载的更新包会在下次启动完成后清理。
+
+开机启动配置不在 JSON 文件中，而在 Windows 任务计划程序的 `GamePause.AutoStart` 任务中；卸载程序会清理该任务。
 
 ### 安全边界与已知限制
 
@@ -151,19 +168,30 @@ dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 ```
 
-输出目录为 `temp\release\GamePause-1.1.1\`，同时生成更新 ZIP 和系统安装包。发布目录中的三个可执行程序必须一起分发。
+脚本会先执行构建、核心测试和更新器自测，再生成四种产物：
+
+```text
+temp\release\GamePause-1.1.2-Full-Setup.exe
+temp\release\GamePause-1.1.2-Lite-Setup.exe
+temp\release\GamePause-1.1.2-Full.zip
+temp\release\GamePause-1.1.2-Lite.zip
+```
+
+对应的展开目录为 `GamePause-1.1.2-Full\` 和 `GamePause-1.1.2-Lite\`。Full 使用 `win-x64` 自包含发布并保留全部框架语言资源；Lite 使用框架依赖发布，不随包附带额外框架语言目录，程序现有中文界面和框架默认英文仍可用。发布脚本从 Lite 目录运行打包后更新器自测，后续本地包验证也应优先使用 Lite。发布目录中的三个可执行程序和 `distribution-channel.txt` 必须一起分发。
 
 ### 发布与自动更新
 
-推送与项目版本一致的标签（例如 `v1.1.1`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成自包含 Windows x64 程序、编译安装包、签名 `latest.json`，并创建 GitHub Release。
+推送与项目版本一致的标签（例如 `v1.1.2`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成四种 Windows x64 发行包、编译安装包、签名双通道更新清单，并创建 GitHub Release。
 
 仓库必须配置 Actions Secret `GAMEPAUSE_UPDATE_PRIVATE_KEY`。它保存与客户端内置公钥对应的 RSA 私钥；不得写入源码、日志或 Release 资产。更新清单固定发布为：
 
 ```text
-https://github.com/Kratosmax/gamepause/releases/latest/download/latest.json
+Full: https://github.com/Kratosmax/gamepause/releases/latest/download/latest-full.json
+Lite: https://github.com/Kratosmax/gamepause/releases/latest/download/latest-lite.json
+旧版兼容: https://github.com/Kratosmax/gamepause/releases/latest/download/latest.json
 ```
 
-每次发布必须同步上传 `GamePause-版本号.zip`、`GamePause-版本号-Setup.exe`、`latest.json` 和 `SHA256SUMS.txt`。安装版和免安装版均可自动覆盖更新；更新器只允许覆盖自身所在目录。
+每次发布必须同步上传四种发行包、`latest-full.json`、`latest-lite.json`、兼容旧版的 `latest.json` 和 `SHA256SUMS.txt`。缺少 `distribution-channel.txt` 的旧版本按 Full 处理；更新包通道与当前安装不一致时会拒绝安装。安装版和免安装版均可自动覆盖更新；更新器只允许覆盖自身所在目录。更新包最大 512 MB，连续 30 秒没有下载数据会中止当前线路并尝试下一条线路。
 
 ### 项目结构
 
@@ -175,6 +203,7 @@ src/GamePause.Updater    独立更新、校验、安装和回滚程序
 tests/GamePause.CoreTests 核心及故障场景测试
 temp/visual-qa           WPF 视觉验收程序（其余 temp 内容不提交）
 scripts/publish.ps1      本地发布脚本
+scripts/New-UpdateManifest.ps1 双通道签名更新清单生成脚本
 ```
 
 ## 如何让 AI 继续开发本项目
@@ -186,7 +215,7 @@ scripts/publish.ps1      本地发布脚本
 1. 本 README，了解产品边界、构建方式和未完成事项。
 2. 与需求直接相关的 `src/` 代码及调用方，不根据类名猜测行为。
 3. `tests/GamePause.CoreTests/Program.cs`，了解已有安全和故障测试。
-4. `scripts/publish.ps1` 与三个项目文件，确认版本号和发布组成。
+4. `scripts/publish.ps1`、`scripts/New-UpdateManifest.ps1`、发布工作流与三个项目文件，确认版本号、四种产物和 Full/Lite 更新通道。
 5. 仓库内的 `AGENTS.md`（如果后续添加），遵守项目级协作规则。
 
 ### 可直接交给 AI 的提示词
@@ -201,10 +230,11 @@ scripts/publish.ps1      本地发布脚本
 2. 不得移除系统关键进程黑名单、PID/启动时间校验、异常恢复记录、守护进程或退出恢复确认。
 3. 不要真实暂停系统关键进程、反作弊组件或在线游戏。测试必须使用模拟、纯逻辑测试或明确安全的自建测试进程。
 4. 更新功能必须保留清单签名、下载后二次哈希、程序集版本校验、ZIP 路径穿越防护、失败回滚和更新器同目录限制。
-5. 不要生成、读取或提交正式发布私钥及其他密钥。
-6. UI 改动必须运行 temp/visual-qa/VisualQa.csproj，检查生成截图；核心逻辑改动必须运行完整核心测试和更新器自测。
-7. 完成后列出修改文件、关键原因、实际运行的命令与结果、截图位置和尚存风险。不能验证的部分必须明确说明。
-8. 不要自行提交或推送，除非我明确授权。
+5. Full/Lite 必须保持独立更新通道；缺少发行标记的旧版本按 Full 处理。本地打包验证优先使用 Lite，不得只验证 Full。
+6. 不要生成、读取或提交正式发布私钥及其他密钥。
+7. UI 改动必须运行 temp/visual-qa/VisualQa.csproj，检查生成截图；核心逻辑改动必须运行完整核心测试和更新器自测。
+8. 完成后列出修改文件、关键原因、实际运行的命令与结果、截图位置和尚存风险。不能验证的部分必须明确说明。
+9. 不要自行提交或推送，除非我明确授权。
 ```
 
 ### 开发与验证原则
@@ -232,6 +262,15 @@ dotnet src\GamePause.Updater\bin\Release\net8.0-windows\GamePause.Updater.dll --
 dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release -- --settings-test
 dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 ```
+
+涉及发布、安装器或自动更新时，还必须执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
+dotnet .\temp\release\GamePause-1.1.2-Lite\GamePause.Updater.dll --self-test
+```
+
+检查四个发行文件均存在，Lite 目录不含 `coreclr.dll` 且通道标记为 `lite`，Full 目录包含 `coreclr.dll` 且通道标记为 `full`。
 
 最后检查 `git diff`、`git status --short` 和生成截图，确认没有把 `bin/`、`obj/`、`artifacts/`、发布包、截图、日志、用户数据或密钥加入提交。
 

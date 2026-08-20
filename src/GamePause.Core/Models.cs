@@ -14,7 +14,14 @@ public sealed record WindowProcessInfo(
     string WindowTitle,
     long WorkingSetBytes,
     bool IsProtected,
-    string? ExecutablePath = null);
+    string? ExecutablePath = null,
+    long StartTimeUtcTicks = 0)
+{
+    public ProcessIdentity ToRootIdentity() => new(
+        ProcessId, 0, 0, Name, ExecutablePath, StartTimeUtcTicks);
+}
+
+public sealed class ProcessIdentityMismatchException(string message) : InvalidOperationException(message);
 
 public enum GamePauseMode
 {

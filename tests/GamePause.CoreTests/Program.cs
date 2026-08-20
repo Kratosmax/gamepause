@@ -19,12 +19,14 @@ var tests = new (string Name, Action Run)[]
 {
     ("Safety policy protects Windows and Game Pause processes", TestSafetyPolicy),
     ("Suspend orders children before parent and persists state", TestSuspendOrder),
+    ("Suspend rejects a root identity whose PID was reused", TestStaleRootIdentity),
     ("Resume orders parent before children and clears state", TestResumeOrder),
     ("Recovery skips planned processes that were never submitted to Windows", TestPlannedProcessOwnership),
     ("Multiple targets can be suspended and selectively resumed", TestMultipleTargets),
     ("Deep suspend trims working sets and persists measurements", TestDeepSuspend),
     ("Deep trim failure keeps the process suspended and records the error", TestDeepTrimFailure),
     ("Windows working-set trim reduces memory for a disposable child process", TestNativeWorkingSetTrim),
+    ("Native suspend verifies start time on the operation handle", TestNativeIdentityValidation),
     ("Reconcile removes processes that are no longer suspended", TestReconcile),
     ("Legacy single-target recovery state is migrated", TestLegacySessionMigration),
     ("Recovery state falls back to its backup when the primary file is corrupt", TestRecoveryBackupFallback),
@@ -36,7 +38,8 @@ var tests = new (string Name, Action Run)[]
     ("Compatibility checker blocks anti-cheat and cautions launchers", TestCompatibilityChecker),
     ("Automatic pause rule honors focus-loss delay", TestAutoRuleTracker),
     ("Update version policy accepts only newer semantic versions", TestUpdateVersionPolicy),
-    ("Update manifests accept valid signatures and reject invalid signatures", TestUpdateManifestSignature)
+    ("Update manifests accept valid signatures and reject invalid signatures", TestUpdateManifestSignature),
+    ("Diagnostic logs rotate before exceeding their size limit", TestDiagnosticLogRotation)
 };
 
 var failures = 0;
@@ -69,7 +72,7 @@ static void TestSafetyPolicy()
 static void TestSuspendOrder()
 {
     using var fixture = new Fixture();
-    var result = fixture.Service.SuspendTree(100);
+    var result = fixture.Service.SuspendTree(fixture.Root(100));
     Assert(result.Success, result.Message);
     AssertSequence(fixture.NativeApi.Suspended, [102, 101, 100]);
     var stored = fixture.Store.Load();
@@ -77,10 +80,19 @@ static void TestSuspendOrder()
     Assert(stored!.Targets.Single().Processes.All(item => item.State == SuspensionState.Suspended), "All states should be suspended.");
 }
 
+static void TestStaleRootIdentity()
+{
+    using var fixture = new Fixture();
+    var stale = fixture.Root(100) with { StartTimeUtcTicks = 999 };
+    var result = fixture.Service.SuspendTree(stale);
+    Assert(!result.Success, "A stale selected process identity must be rejected.");
+    Assert(fixture.NativeApi.Suspended.Count == 0, "No process may be suspended after PID reuse is detected.");
+}
+
 static void TestMultipleTargets()
 {
     using var fixture = new Fixture();
-    var paused = fixture.Service.SuspendTrees([100, 200]);
+    var paused = fixture.Service.SuspendTrees([fixture.Root(100), fixture.Root(200)]);
     Assert(paused.Success, paused.Message);
     Assert(paused.Session?.Targets.Count == 2, "Two paused targets should be recorded.");
     AssertSequence(fixture.NativeApi.Suspended, [102, 101, 100, 201, 200]);
@@ -95,7 +107,7 @@ static void TestMultipleTargets()
 static void TestDeepSuspend()
 {
     using var fixture = new Fixture();
-    var result = fixture.Service.SuspendTrees([100], trimWorkingSets: true);
+    var result = fixture.Service.SuspendTrees([fixture.Root(100)], trimWorkingSets: true);
     Assert(result.Success, result.Message);
     AssertSequence(fixture.NativeApi.Trimmed, [102, 101, 100]);
     var processes = fixture.Store.Load()!.Targets.Single().Processes;
@@ -108,7 +120,7 @@ static void TestDeepTrimFailure()
 {
     using var fixture = new Fixture();
     fixture.NativeApi.TrimFailures.Add(101);
-    var result = fixture.Service.SuspendTrees([100], trimWorkingSets: true);
+    var result = fixture.Service.SuspendTrees([fixture.Root(100)], trimWorkingSets: true);
     Assert(result.Success, result.Message);
     var failedTrim = fixture.Store.Load()!.Targets.Single().Processes.Single(process => process.Identity.ProcessId == 101);
     Assert(failedTrim.State == SuspensionState.Suspended, "A trim failure must not change suspension state.");
@@ -130,20 +142,55 @@ static void TestNativeWorkingSetTrim()
     try
     {
         Assert(process.StandardOutput.ReadLine() == "READY", "Memory probe did not become ready.");
-        nativeApi.Suspend(process.Id);
+        var identity = new ProcessIdentity(
+            process.Id, 0, 0, process.ProcessName, null, process.StartTime.ToUniversalTime().Ticks);
+        nativeApi.Suspend(identity);
         suspended = true;
         var result = nativeApi.TrimWorkingSet(process.Id);
         Assert(result.BeforeBytes >= 32L * 1024 * 1024, "Memory probe did not commit the expected working set.");
         Assert(result.AfterBytes < result.BeforeBytes, "Windows did not reduce the child working set.");
-        nativeApi.Resume(process.Id);
+        nativeApi.Resume(identity);
         suspended = false;
     }
     finally
     {
         if (suspended)
         {
-            try { nativeApi.Resume(process.Id); } catch { }
+            try
+            {
+                nativeApi.Resume(new ProcessIdentity(
+                    process.Id, 0, 0, process.ProcessName, null, process.StartTime.ToUniversalTime().Ticks));
+            }
+            catch { }
         }
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(5000);
+        }
+    }
+}
+
+static void TestNativeIdentityValidation()
+{
+    var executablePath = Environment.ProcessPath
+        ?? throw new InvalidOperationException("Unable to locate the test executable.");
+    using var process = Process.Start(new ProcessStartInfo(executablePath, "--memory-helper")
+    {
+        UseShellExecute = false,
+        RedirectStandardOutput = true,
+        CreateNoWindow = true
+    }) ?? throw new InvalidOperationException("Unable to start the identity probe.");
+    try
+    {
+        Assert(process.StandardOutput.ReadLine() == "READY", "Identity probe did not become ready.");
+        var stale = new ProcessIdentity(
+            process.Id, 0, 0, process.ProcessName, null, process.StartTime.ToUniversalTime().Ticks + 1);
+        AssertThrows<ProcessIdentityMismatchException>(() => new NativeProcessApi().Suspend(stale),
+            "A mismatched process start time must be rejected before suspension.");
+    }
+    finally
+    {
         if (!process.HasExited)
         {
             process.Kill(entireProcessTree: true);
@@ -155,7 +202,7 @@ static void TestNativeWorkingSetTrim()
 static void TestReconcile()
 {
     using var fixture = new Fixture();
-    fixture.Service.SuspendTree(100);
+    fixture.Service.SuspendTree(fixture.Root(100));
     fixture.NativeApi.SuspendedProcessIds.Remove(101);
     var result = fixture.Service.ReconcileActiveSession();
     Assert(result.Success, result.Message);
@@ -186,7 +233,7 @@ static void TestLegacySessionMigration()
 static void TestRecoveryBackupFallback()
 {
     using var fixture = new Fixture();
-    Assert(fixture.Service.SuspendTree(100).Success, "Fixture pause failed.");
+    Assert(fixture.Service.SuspendTree(fixture.Root(100)).Success, "Fixture pause failed.");
     Assert(File.Exists(fixture.Store.BackupFilePath), "A recovery backup must be written.");
     File.WriteAllText(fixture.Store.SessionFilePath, "{invalid json");
     var recovered = fixture.Store.Load();
@@ -211,7 +258,7 @@ static void TestRecoveryCorruptionReported()
 static void TestResumeOrder()
 {
     using var fixture = new Fixture();
-    fixture.Service.SuspendTree(100);
+    fixture.Service.SuspendTree(fixture.Root(100));
     var result = fixture.Service.ResumeActiveSession();
     Assert(result.Success, result.Message);
     AssertSequence(fixture.NativeApi.Resumed, [100, 101, 102]);
@@ -234,7 +281,7 @@ static void TestPlannedProcessOwnership()
 static void TestPidReuseProtection()
 {
     using var fixture = new Fixture();
-    fixture.Service.SuspendTree(100);
+    fixture.Service.SuspendTree(fixture.Root(100));
     fixture.Catalog.InvalidProcessIds.Add(101);
     var result = fixture.Service.ResumeActiveSession();
     Assert(result.Success, result.Message);
@@ -326,6 +373,24 @@ static void TestUpdateManifestSignature()
         "Malformed signature data must be rejected.");
 }
 
+static void TestDiagnosticLogRotation()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "GamePauseLogTests", Guid.NewGuid().ToString("N"));
+    var path = Path.Combine(directory, "test.log");
+    try
+    {
+        Assert(DiagnosticLog.Append(path, new string('A', 20), 32), "First log write failed.");
+        Assert(DiagnosticLog.Append(path, new string('B', 20), 32), "Second log write failed.");
+        Assert(File.Exists(path + ".old"), "The previous log must be retained after rotation.");
+        Assert(File.ReadAllText(path + ".old").Contains('A'), "The rotated log lost its previous content.");
+        Assert(File.ReadAllText(path).Contains('B'), "The active log does not contain the latest entry.");
+    }
+    finally
+    {
+        if (Directory.Exists(directory)) Directory.Delete(directory, true);
+    }
+}
+
 static WindowProcessInfo[] SampleWindowProcesses() =>
 [
     new(101, "notepad", "notes.txt", 1024, false),
@@ -339,6 +404,19 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static void AssertThrows<TException>(Action action, string message) where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+    throw new InvalidOperationException(message);
 }
 
 static void AssertSequence(IReadOnlyList<int> actual, IReadOnlyList<int> expected)
@@ -362,6 +440,9 @@ sealed class Fixture : IDisposable
     public FakeNativeApi NativeApi { get; }
     public SessionStore Store { get; }
     public ProcessSuspensionService Service { get; }
+
+    public ProcessIdentity Root(int processId) => Catalog.GetProcessTree(processId)
+        .Single(process => process.ProcessId == processId);
 
     public void Dispose()
     {
@@ -404,14 +485,16 @@ sealed class FakeNativeApi : IProcessNativeApi
     public List<int> Trimmed { get; } = [];
     public HashSet<int> TrimFailures { get; } = [];
 
-    public void Suspend(int processId)
+    public void Suspend(ProcessIdentity identity)
     {
+        var processId = identity.ProcessId;
         Suspended.Add(processId);
         SuspendedProcessIds.Add(processId);
     }
 
-    public void Resume(int processId)
+    public void Resume(ProcessIdentity identity)
     {
+        var processId = identity.ProcessId;
         Resumed.Add(processId);
         SuspendedProcessIds.Remove(processId);
     }

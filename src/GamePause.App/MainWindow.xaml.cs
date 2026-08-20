@@ -30,7 +30,7 @@ public partial class MainWindow : System.Windows.Window
     private readonly GameProfileStore _profileStore;
     private readonly AutoRuleTracker _autoRuleTracker = new();
     private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(2) };
-    private readonly HashSet<int> _checkedProcessIds = [];
+    private readonly Dictionary<int, ProcessIdentity> _checkedProcesses = [];
     private readonly HashSet<Guid> _checkedPausedTargetIds = [];
     private readonly Forms.NotifyIcon _notifyIcon = new();
     private readonly bool _visualQa;
@@ -198,6 +198,17 @@ public partial class MainWindow : System.Windows.Window
         var recovery = _suspensionService.ReconcileActiveSession();
         SetStatus(recovery.Message, !recovery.Success ? StateTone.Error
             : recovery.Session is null ? StateTone.Neutral : StateTone.Warning);
+        if (_profileStore.LastLoadError is not null)
+        {
+            _store.Log(_profileStore.LastLoadError);
+            WpfMessageBox.Show(
+                _profileStore.LastLoadError + (_profileStore.IsWriteBlocked
+                    ? "\n\n为避免覆盖原文件，本次运行已禁止保存游戏档案。"
+                    : "\n\n现有档案已保留，建议检查后重新保存。"),
+                "游戏档案恢复",
+                System.Windows.MessageBoxButton.OK,
+                _profileStore.IsWriteBlocked ? System.Windows.MessageBoxImage.Error : System.Windows.MessageBoxImage.Warning);
+        }
         if (!WatchdogLauncher.Start(_store))
         {
             SetStatus("守护进程未启动；退出前请恢复所有程序。", StateTone.Warning);
@@ -340,8 +351,8 @@ public partial class MainWindow : System.Windows.Window
         if (_refreshingRows || sender is not System.Windows.Controls.CheckBox { DataContext: AvailableProcessRow row }) return;
         row.IsChecked = (sender as System.Windows.Controls.CheckBox)?.IsChecked == true;
         if (row.Source is null) return;
-        if (row.IsChecked) _checkedProcessIds.Add(row.ProcessId);
-        else _checkedProcessIds.Remove(row.ProcessId);
+        if (row.IsChecked) _checkedProcesses[row.ProcessId] = row.Source.ToRootIdentity();
+        else _checkedProcesses.Remove(row.ProcessId);
         UpdateSelectionSummary();
     }
 
@@ -366,14 +377,14 @@ public partial class MainWindow : System.Windows.Window
             SetStatus("未捕获到可暂停的前台进程。", StateTone.Warning);
             return;
         }
-        _checkedProcessIds.Add(foreground.ProcessId);
+        _checkedProcesses[foreground.ProcessId] = foreground;
         RefreshAllLists();
         SetStatus($"已勾选 {KnownGames.GetDisplayName(foreground.Name)}。", StateTone.Success);
     }
 
     private async Task TogglePauseAsync()
     {
-        if (_checkedProcessIds.Count > 0) { await PauseCheckedAsync(); return; }
+        if (_checkedProcesses.Count > 0) { await PauseCheckedAsync(); return; }
         if (_suspensionService.ActiveSession is not null) { await EmergencyResumeAsync(); return; }
         var foreground = _catalog.GetForegroundProcess();
         if (foreground is null || _safetyPolicy.IsProtected(foreground))
@@ -382,39 +393,40 @@ public partial class MainWindow : System.Windows.Window
             return;
         }
         var foregroundInfo = new WindowProcessInfo(
-            foreground.ProcessId, foreground.Name, string.Empty, 0, false, foreground.ExecutablePath);
+            foreground.ProcessId, foreground.Name, string.Empty, 0, false,
+            foreground.ExecutablePath, foreground.StartTimeUtcTicks);
         if (!ConfirmCompatibility([foregroundInfo])) return;
         SetBusy(true, "正在暂停前台进程树...");
-        FinishOperation(await Task.Run(() => _suspensionService.SuspendTree(foreground.ProcessId)));
+        FinishOperation(await Task.Run(() => _suspensionService.SuspendTree(foreground)));
     }
 
     private async Task PauseCheckedAsync()
     {
         if (_operationInProgress) return;
-        var processIds = _checkedProcessIds.ToArray();
-        if (processIds.Length == 0) { SetStatus("请先在“可暂停进程”中勾选程序。", StateTone.Warning); return; }
-        var selected = _cachedProcesses.Where(process => processIds.Contains(process.ProcessId)).ToArray();
+        var identities = _checkedProcesses.Values.ToArray();
+        if (identities.Length == 0) { SetStatus("请先在“可暂停进程”中勾选程序。", StateTone.Warning); return; }
+        var selected = GetCurrentlySelectedProcesses(identities);
         if (!ConfirmCompatibility(selected)) return;
-        SetBusy(true, $"正在暂停 {processIds.Length} 个程序的进程树...");
-        var result = await Task.Run(() => _suspensionService.SuspendTrees(processIds));
-        if (result.Success) _checkedProcessIds.Clear();
+        SetBusy(true, $"正在暂停 {identities.Length} 个程序的进程树...");
+        var result = await Task.Run(() => _suspensionService.SuspendTrees(identities));
+        if (result.Success) _checkedProcesses.Clear();
         FinishOperation(result);
     }
 
     private async Task DeepPauseCheckedAsync()
     {
         if (_operationInProgress) return;
-        var processIds = _checkedProcessIds.ToArray();
-        if (processIds.Length == 0) { SetStatus("请先在“可暂停进程”中勾选程序。", StateTone.Warning); return; }
-        var selected = _cachedProcesses.Where(process => processIds.Contains(process.ProcessId)).ToArray();
+        var identities = _checkedProcesses.Values.ToArray();
+        if (identities.Length == 0) { SetStatus("请先在“可暂停进程”中勾选程序。", StateTone.Warning); return; }
+        var selected = GetCurrentlySelectedProcesses(identities);
         if (!ConfirmCompatibility(selected)) return;
         var answer = WpfMessageBox.Show(
             "深度暂停会先冻结程序，再请求 Windows 回收其物理工作集。\n\n这不是可跨重启恢复的内存镜像；恢复时可能出现明显卡顿。是否继续？",
             "确认深度暂停", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning, System.Windows.MessageBoxResult.No);
         if (answer != System.Windows.MessageBoxResult.Yes) return;
-        SetBusy(true, $"正在深度暂停 {processIds.Length} 个程序...");
-        var result = await Task.Run(() => _suspensionService.SuspendTrees(processIds, trimWorkingSets: true));
-        if (result.Success) _checkedProcessIds.Clear();
+        SetBusy(true, $"正在深度暂停 {identities.Length} 个程序...");
+        var result = await Task.Run(() => _suspensionService.SuspendTrees(identities, trimWorkingSets: true));
+        if (result.Success) _checkedProcesses.Clear();
         FinishOperation(result);
     }
 
@@ -490,7 +502,17 @@ public partial class MainWindow : System.Windows.Window
         if (_operationInProgress || _visualQa) return;
         _cachedProcesses = _catalog.GetWindowProcesses();
         _runningProcessNames = _catalog.GetRunningProcessNames();
-        _checkedProcessIds.IntersectWith(_cachedProcesses.Select(process => process.ProcessId));
+        var currentIdentities = _cachedProcesses.ToDictionary(
+            process => process.ProcessId,
+            process => process.StartTimeUtcTicks);
+        foreach (var selected in _checkedProcesses.ToArray())
+        {
+            if (!currentIdentities.TryGetValue(selected.Key, out var startTimeUtcTicks)
+                || startTimeUtcTicks != selected.Value.StartTimeUtcTicks)
+            {
+                _checkedProcesses.Remove(selected.Key);
+            }
+        }
         ApplyProcessFilter();
         RefreshPausedGrid();
         RefreshProfileRows();
@@ -513,7 +535,7 @@ public partial class MainWindow : System.Windows.Window
                 ? new SolidColorBrush(MediaColor.FromRgb(148, 163, 184))
                 : new SolidColorBrush(MediaColor.FromRgb(30, 41, 59));
             AvailableProcesses.Add(new AvailableProcessRow(
-                _checkedProcessIds.Contains(process.ProcessId),
+                _checkedProcesses.ContainsKey(process.ProcessId),
                 compatibility.Rating != CompatibilityRating.Blocked && !isPaused,
                 isPaused ? "已暂停" : isForeground ? "前台" : string.Empty,
                 compatibility.Label,
@@ -555,6 +577,14 @@ public partial class MainWindow : System.Windows.Window
             System.Windows.MessageBoxResult.No) == System.Windows.MessageBoxResult.Yes;
     }
 
+    private WindowProcessInfo[] GetCurrentlySelectedProcesses(IEnumerable<ProcessIdentity> identities)
+    {
+        var expected = identities.ToDictionary(process => process.ProcessId, process => process.StartTimeUtcTicks);
+        return _cachedProcesses.Where(process => expected.TryGetValue(process.ProcessId, out var startTimeUtcTicks)
+                                                 && process.StartTimeUtcTicks == startTimeUtcTicks)
+            .ToArray();
+    }
+
     private async Task PauseProfileAsync(GameProfile profile, WindowProcessInfo process, bool automatic)
     {
         if (_operationInProgress) return;
@@ -569,7 +599,7 @@ public partial class MainWindow : System.Windows.Window
 
         SetBusy(true, automatic ? $"正在按规则暂停 {profile.DisplayName}..." : $"正在暂停 {profile.DisplayName}...");
         var result = await Task.Run(() => _suspensionService.SuspendTrees(
-            [process.ProcessId], profile.PauseMode == GamePauseMode.Deep));
+            [process.ToRootIdentity()], profile.PauseMode == GamePauseMode.Deep));
         FinishOperation(result);
         if (automatic && result.Success)
         {
@@ -665,12 +695,12 @@ public partial class MainWindow : System.Windows.Window
 
     private void UpdateSelectionSummary()
     {
-        SelectionLabel.Text = _checkedProcessIds.Count == 0 ? "尚未勾选程序" : $"已勾选 {_checkedProcessIds.Count} 个程序";
-        var names = _cachedProcesses.Where(process => _checkedProcessIds.Contains(process.ProcessId))
+        SelectionLabel.Text = _checkedProcesses.Count == 0 ? "尚未勾选程序" : $"已勾选 {_checkedProcesses.Count} 个程序";
+        var names = _cachedProcesses.Where(process => _checkedProcesses.ContainsKey(process.ProcessId))
             .Select(process => KnownGames.GetDisplayName(process.Name)).Take(3).ToArray();
         SelectionDetailLabel.Text = names.Length == 0
             ? "在“可暂停进程”中勾选一个或多个程序"
-            : string.Join("、", names) + (_checkedProcessIds.Count > names.Length ? " 等" : string.Empty);
+            : string.Join("、", names) + (_checkedProcesses.Count > names.Length ? " 等" : string.Empty);
     }
 
     private void RefreshProfileRows()
@@ -694,7 +724,7 @@ public partial class MainWindow : System.Windows.Window
 
     private void AddProfileFromCheckedProcess()
     {
-        var selected = _cachedProcesses.Where(process => _checkedProcessIds.Contains(process.ProcessId)).ToArray();
+        var selected = _cachedProcesses.Where(process => _checkedProcesses.ContainsKey(process.ProcessId)).ToArray();
         if (selected.Length == 0)
         {
             WpfMessageBox.Show("请先在“可暂停进程”中勾选一个或多个程序。", "游戏档案",
@@ -804,7 +834,7 @@ public partial class MainWindow : System.Windows.Window
             SetStatus($"未找到正在运行的 {row.DisplayName}。", StateTone.Warning);
             return;
         }
-        _checkedProcessIds.Add(process.ProcessId);
+        _checkedProcesses[process.ProcessId] = process.ToRootIdentity();
         MainTabs.SelectedIndex = 0;
         SearchBox.Clear();
         ForegroundOnlyCheck.IsChecked = false;
@@ -847,9 +877,17 @@ public partial class MainWindow : System.Windows.Window
             RefreshProfileRows();
             SetStatus(successMessage, StateTone.Success);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
+            _profiles.Clear();
+            _profiles.AddRange(_profileStore.Load());
+            RefreshProfileRows();
             SetStatus($"游戏档案保存失败：{exception.Message}", StateTone.Error);
+            if (exception is InvalidDataException)
+            {
+                WpfMessageBox.Show(exception.Message, "游戏档案保存已阻止",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            }
         }
     }
 

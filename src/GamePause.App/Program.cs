@@ -8,6 +8,8 @@ static class Program
         var startupStore = new GamePause.Core.SessionStore();
         startupStore.Log("Application process started.");
         UpdaterMaintenance.TryComplete(args, startupStore);
+        if (!UpdateService.CleanupDownloadedPackages())
+            startupStore.Log("Unable to remove downloaded update packages during startup cleanup.");
         AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
             startupStore.Log($"Unhandled process exception; terminating={eventArgs.IsTerminating}: {eventArgs.ExceptionObject}");
         TaskScheduler.UnobservedTaskException += (_, eventArgs) =>

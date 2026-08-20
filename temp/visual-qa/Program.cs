@@ -16,7 +16,7 @@ internal static class Program
 
         if (args.Contains("--settings-test", StringComparer.OrdinalIgnoreCase))
         {
-            RunSettingsTest();
+            RunSettingsTest().GetAwaiter().GetResult();
             return 0;
         }
 
@@ -49,7 +49,7 @@ internal static class Program
         var settingsWindow = new HotkeySettingsWindow(
             HotkeySettings.Default,
             true,
-            "1.1.1",
+            "1.1.2",
             new UpdateNetworkSettings([
                 new GithubProxySetting(string.Empty, 8, true),
                 new GithubProxySetting("https://gh-proxy.org", 10),
@@ -64,7 +64,7 @@ internal static class Program
         Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf-minimum.png"), 680, 610);
         settingsWindow.Close();
 
-        var updateWindow = new UpdatePromptWindow("1.1.1", "1.2.0",
+        var updateWindow = new UpdatePromptWindow("1.1.2", "1.2.0",
             "新增自动更新支持。\n修复进程暂停恢复稳定性问题。");
         updateWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
@@ -77,7 +77,7 @@ internal static class Program
         return 0;
     }
 
-    private static void RunSettingsTest()
+    private static async Task RunSettingsTest()
     {
         var directory = Path.Combine(Path.GetTempPath(), "GamePauseUiSettingsTests", Guid.NewGuid().ToString("N"));
         try
@@ -118,6 +118,17 @@ internal static class Program
             if (!UpdateService.BuildRequestUrls(nonGithubUrl, savedNetwork).SequenceEqual([nonGithubUrl]))
                 throw new InvalidOperationException("A non-GitHub URL was rewritten.");
 
+            var channelDirectory = Path.Combine(directory, "distribution-channel");
+            Directory.CreateDirectory(channelDirectory);
+            if (!UpdateService.GetManifestUrl(channelDirectory).EndsWith("latest-full.json", StringComparison.Ordinal))
+                throw new InvalidOperationException("A legacy package without a channel marker did not default to Full.");
+            File.WriteAllText(Path.Combine(channelDirectory, UpdateService.DistributionChannelFileName), "lite");
+            if (!UpdateService.GetManifestUrl(channelDirectory).EndsWith("latest-lite.json", StringComparison.Ordinal))
+                throw new InvalidOperationException("The Lite package did not select the Lite update channel.");
+            File.WriteAllText(Path.Combine(channelDirectory, UpdateService.DistributionChannelFileName), "unknown");
+            if (!UpdateService.GetManifestUrl(channelDirectory).EndsWith("latest-full.json", StringComparison.Ordinal))
+                throw new InvalidOperationException("An unknown package channel did not fail closed to Full.");
+
             var normalizedWithoutDirect = new UpdateNetworkSettings([
                 new GithubProxySetting("https://proxy-only.example", 7)
             ]).Normalize();
@@ -157,6 +168,66 @@ internal static class Program
             {
                 throw new InvalidOperationException("Saved game profile was not reloaded.");
             }
+            var profilePath = Path.Combine(directory, "profiles.json");
+            if (!File.Exists(profilePath + ".bak"))
+                throw new InvalidOperationException("A game profile backup was not created.");
+            File.WriteAllText(profilePath, "{broken");
+            var recoveredProfileStore = new GameProfileStore(directory);
+            if (recoveredProfileStore.Load().Count != 2
+                || recoveredProfileStore.IsWriteBlocked
+                || string.IsNullOrWhiteSpace(recoveredProfileStore.LastLoadError))
+                throw new InvalidOperationException("Game profiles were not recovered from their backup.");
+
+            var corruptProfileDirectory = Path.Combine(directory, "corrupt-profiles");
+            Directory.CreateDirectory(corruptProfileDirectory);
+            foreach (var fileName in new[] { "profiles.json", "profiles.json.tmp", "profiles.json.bak" })
+                File.WriteAllText(Path.Combine(corruptProfileDirectory, fileName), "{broken");
+            var blockedProfileStore = new GameProfileStore(corruptProfileDirectory);
+            if (blockedProfileStore.Load().Count != 0 || !blockedProfileStore.IsWriteBlocked)
+                throw new InvalidOperationException("Completely corrupt game profiles did not block writes.");
+            try
+            {
+                blockedProfileStore.Save([]);
+                throw new InvalidOperationException("A blocked game profile store accepted an overwrite.");
+            }
+            catch (InvalidDataException)
+            {
+                // Expected: the damaged files remain available for manual recovery.
+            }
+
+            using (var source = new MemoryStream(new byte[9]))
+            using (var destination = new MemoryStream())
+            {
+                try
+                {
+                    await UpdateService.CopyDownloadAsync(source, destination, 8, TimeSpan.FromSeconds(1));
+                    throw new InvalidOperationException("An oversized update download was accepted.");
+                }
+                catch (InvalidDataException)
+                {
+                    // Expected.
+                }
+            }
+
+            using (var source = new StallingReadStream())
+            using (var destination = new MemoryStream())
+            {
+                try
+                {
+                    await UpdateService.CopyDownloadAsync(source, destination, 1024, TimeSpan.FromMilliseconds(30));
+                    throw new InvalidOperationException("A stalled update download did not time out.");
+                }
+                catch (TimeoutException)
+                {
+                    // Expected.
+                }
+            }
+
+            var updatesDirectory = Path.Combine(directory, "updates");
+            Directory.CreateDirectory(Path.Combine(updatesDirectory, "old-version"));
+            File.WriteAllText(Path.Combine(updatesDirectory, "old-version", "package.zip"), "old");
+            if (!UpdateService.CleanupDownloadedPackages(updatesDirectory) || Directory.Exists(updatesDirectory))
+                throw new InvalidOperationException("Downloaded update packages were not cleaned up.");
             var hotkeyStore = new HotkeySettingsStore(directory);
             hotkeyStore.Save(HotkeySettings.Default);
             if (new HotkeySettingsStore(directory).Load() != HotkeySettings.Default)
@@ -176,6 +247,28 @@ internal static class Program
         finally
         {
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    private sealed class StallingReadStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
         }
     }
 

@@ -28,7 +28,8 @@ $openssl = $opensslCandidates | Select-Object -First 1
 if (-not $openssl) { throw 'OpenSSL was not found. Set OPENSSL_EXE to its executable path.' }
 
 $sha256 = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash.ToUpperInvariant()
-$downloadUrl = "https://github.com/$Repository/releases/download/v$Version/GamePause-$Version.zip"
+$assetName = [IO.Path]::GetFileName($PackagePath)
+$downloadUrl = "https://github.com/$Repository/releases/download/v$Version/$assetName"
 $payload = "$Version`n$downloadUrl`n$sha256"
 $workingDirectory = Join-Path (Split-Path $OutputPath) ('.signing-' + [Guid]::NewGuid().ToString('N'))
 $payloadPath = Join-Path $workingDirectory 'payload.txt'

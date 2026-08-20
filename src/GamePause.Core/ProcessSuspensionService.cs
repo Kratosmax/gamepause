@@ -22,9 +22,9 @@ public sealed class ProcessSuspensionService
 
     public SuspensionSession? ActiveSession => _store.Load();
 
-    public OperationResult SuspendTree(int rootProcessId) => SuspendTrees([rootProcessId]);
+    public OperationResult SuspendTree(ProcessIdentity rootProcess) => SuspendTrees([rootProcess]);
 
-    public OperationResult SuspendTrees(IEnumerable<int> rootProcessIds, bool trimWorkingSets = false)
+    public OperationResult SuspendTrees(IEnumerable<ProcessIdentity> rootProcesses, bool trimWorkingSets = false)
     {
         lock (_syncRoot)
         {
@@ -39,9 +39,17 @@ public sealed class ProcessSuspensionService
                 .ToHashSet();
             var newTargets = new List<SuspendedTarget>();
 
-            foreach (var rootProcessId in rootProcessIds.Distinct())
+            foreach (var requestedRoot in rootProcesses
+                         .GroupBy(process => process.ProcessId)
+                         .Select(group => group.First()))
             {
+                var rootProcessId = requestedRoot.ProcessId;
                 var tree = _catalog.GetProcessTree(rootProcessId);
+                var currentRoot = tree.FirstOrDefault(process => process.ProcessId == rootProcessId);
+                if (currentRoot is null || currentRoot.StartTimeUtcTicks != requestedRoot.StartTimeUtcTicks)
+                {
+                    continue;
+                }
                 var safeProcesses = tree
                     .Where(process => !_safetyPolicy.IsProtected(process))
                     .Where(process => !claimedProcessIds.Contains(process.ProcessId))
@@ -98,7 +106,7 @@ public sealed class ProcessSuspensionService
                     _store.Save(session);
                     try
                     {
-                        _nativeApi.Suspend(states[index].Identity.ProcessId);
+                        _nativeApi.Suspend(states[index].Identity);
                         states[index] = states[index] with { State = SuspensionState.Suspended, Error = null };
                         targetSuspendedCount++;
                         suspendedProcesses++;
@@ -121,6 +129,11 @@ public sealed class ProcessSuspensionService
                                 _store.Log($"Working-set trim failed for {states[index].Identity.Name} ({states[index].Identity.ProcessId}): {exception.Message}");
                             }
                         }
+                    }
+                    catch (ProcessIdentityMismatchException exception)
+                    {
+                        states[index] = states[index] with { State = SuspensionState.Skipped, Error = exception.Message };
+                        _store.Log($"Suspend skipped for {states[index].Identity.Name} ({states[index].Identity.ProcessId}): {exception.Message}");
                     }
                     catch (Exception exception)
                     {
@@ -283,9 +296,17 @@ public sealed class ProcessSuspensionService
 
                 try
                 {
-                    _nativeApi.Resume(indexed.state.Identity.ProcessId);
+                    _nativeApi.Resume(indexed.state.Identity);
                     states[indexed.index] = indexed.state with { State = SuspensionState.Resumed, Error = null };
                     resumedProcesses++;
+                }
+                catch (ProcessIdentityMismatchException exception)
+                {
+                    states[indexed.index] = indexed.state with
+                    {
+                        State = SuspensionState.Skipped,
+                        Error = exception.Message
+                    };
                 }
                 catch (Exception exception)
                 {

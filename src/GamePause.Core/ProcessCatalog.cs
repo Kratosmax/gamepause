@@ -121,7 +121,8 @@ public sealed class ProcessCatalog : IProcessCatalog
                     title,
                     process.WorkingSet64,
                     _safetyPolicy.IsProtected(processId, name),
-                    executablePath);
+                    executablePath,
+                    process.StartTime.ToUniversalTime().Ticks);
             }
             catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Win32Exception)
             {
