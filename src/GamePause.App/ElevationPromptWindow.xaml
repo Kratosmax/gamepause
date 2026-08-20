@@ -1,0 +1,80 @@
+<Window x:Class="GamePause.App.ElevationPromptWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="需要管理员权限"
+        Width="470" Height="310"
+        MinWidth="470" MinHeight="310"
+        MaxWidth="470" MaxHeight="310"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        ShowInTaskbar="True"
+        Background="#F2F7FA"
+        FontFamily="Segoe UI"
+        FontSize="14"
+        Foreground="#1E293B"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+    <Window.Resources>
+        <Style x:Key="PromptButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.88" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.76" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="28,24,28,22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Game Pause 需要管理员权限" FontSize="21" FontWeight="SemiBold" />
+            <TextBlock Margin="0,9,0,0" Foreground="#5C6C7C" TextWrapping="Wrap"
+                       Text="暂停和恢复其他程序需要管理员权限。继续后 Windows 会显示用户账户控制提示。" />
+        </StackPanel>
+
+        <Border Grid.Row="1" MinHeight="58" Margin="0,17,0,17" Padding="14,10"
+                Background="#E6FFFFFF" BorderBrush="#BFCED9" BorderThickness="1" CornerRadius="8">
+            <TextBlock VerticalAlignment="Center" Foreground="#425466" TextWrapping="Wrap"
+                       Text="如果取消，Game Pause 将直接退出，不会在权限不足的状态下继续运行。" />
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="取消" Width="92" IsCancel="True"
+                    Style="{StaticResource PromptButtonStyle}"
+                    Background="#E8FFFFFF" BorderBrush="#BFCED9" Foreground="#1E293B"
+                    Click="Cancel_Click" />
+            <Button Content="以管理员身份启动" Width="158" Margin="10,0,0,0" IsDefault="True"
+                    Style="{StaticResource PromptButtonStyle}"
+                    Background="#2678F6" BorderBrush="#2678F6" Foreground="White"
+                    Click="Restart_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

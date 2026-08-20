@@ -901,48 +901,82 @@ public partial class MainWindow : System.Windows.Window
             _uiSettings.EffectiveUpdateNetwork,
             (owner, networkSettings) => CheckForUpdatesAsync(userInitiated: true, owner, networkSettings)) { Owner = this };
         if (dialog.ShowDialog() != true) return;
-        if (!TryApplyHotkeySettings(dialog.SelectedSettings))
+        var hotkeysChanged = dialog.SelectedSettings != _hotkeySettings;
+        var networkChanged = !NetworkSettingsEqual(
+            dialog.SelectedUpdateNetworkSettings, _uiSettings.EffectiveUpdateNetwork);
+        var startupChanged = dialog.StartupEnabled != startupEnabled;
+        if (hotkeysChanged && !TryApplyHotkeySettings(dialog.SelectedSettings))
         {
             WpfMessageBox.Show("快捷键注册失败：组合键可能已被其他程序占用。原快捷键已恢复。", "快捷键冲突",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
             return;
         }
-        string? hotkeySaveError = null;
-        try
+        var successes = new List<string>();
+        var failures = new List<string>();
+        if (hotkeysChanged)
         {
-            _hotkeyStore.Save(_hotkeySettings);
-            SetStatus("快捷键已保存。", StateTone.Success);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            hotkeySaveError = exception.Message;
-            SetStatus($"快捷键已生效，但保存失败：{exception.Message}", StateTone.Warning);
-        }
-        UpdateHotkeyLabel();
-
-        _uiSettings = _uiSettings with { UpdateNetwork = dialog.SelectedUpdateNetworkSettings };
-        if (!_uiSettingsStore.Save(_uiSettings))
-        {
-            WpfMessageBox.Show("网络与更新设置已在本次运行中生效，但无法写入 ui-settings.json。", "设置保存失败",
-                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
-            SetStatus("部分设置无法保存到磁盘。", StateTone.Warning);
+            try
+            {
+                _hotkeyStore.Save(_hotkeySettings);
+                successes.Add("快捷键已保存");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                failures.Add($"快捷键已生效，但保存失败：{exception.Message}");
+            }
+            UpdateHotkeyLabel();
         }
 
-        if (dialog.StartupEnabled != startupEnabled)
+        if (networkChanged)
+        {
+            _uiSettings = _uiSettings with { UpdateNetwork = dialog.SelectedUpdateNetworkSettings };
+            if (_uiSettingsStore.Save(_uiSettings))
+            {
+                successes.Add("网络与更新设置已保存");
+            }
+            else
+            {
+                WpfMessageBox.Show("网络与更新设置已在本次运行中生效，但无法写入 ui-settings.json。", "设置保存失败",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                failures.Add("网络与更新设置已生效，但无法保存到磁盘");
+            }
+        }
+
+        if (startupChanged)
         {
             var startupResult = await Task.Run(() => StartupTaskService.SetEnabled(dialog.StartupEnabled));
             if (!startupResult.Success)
             {
                 WpfMessageBox.Show(startupResult.Message, "开机启动设置失败",
                     System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
-                SetStatus("快捷键已保存，但开机启动设置失败。", StateTone.Warning);
-                return;
+                failures.Add(startupResult.Message.TrimEnd('。'));
             }
-            SetStatus(hotkeySaveError is null
-                ? "设置已保存。" + startupResult.Message
-                : $"开机启动已更新，但快捷键保存失败：{hotkeySaveError}",
-                hotkeySaveError is null ? StateTone.Success : StateTone.Warning);
+            else
+            {
+                successes.Add(startupResult.Message.TrimEnd('。'));
+            }
         }
+
+        var statusTone = failures.Count > 0
+            ? StateTone.Warning
+            : successes.Count > 0 ? StateTone.Success : StateTone.Neutral;
+        SetStatus(FormatSettingsSaveStatus(successes, failures), statusTone);
+    }
+
+    internal static string FormatSettingsSaveStatus(
+        IReadOnlyList<string> successes,
+        IReadOnlyList<string> failures)
+    {
+        if (successes.Count == 0 && failures.Count == 0) return "设置没有变化。";
+        return string.Join("；", successes.Concat(failures)) + "。";
+    }
+
+    private static bool NetworkSettingsEqual(UpdateNetworkSettings left, UpdateNetworkSettings right)
+    {
+        var normalizedLeft = left.Normalize();
+        var normalizedRight = right.Normalize();
+        return string.Equals(normalizedLeft.HttpProxy, normalizedRight.HttpProxy, StringComparison.OrdinalIgnoreCase)
+               && (normalizedLeft.GithubProxies ?? []).SequenceEqual(normalizedRight.GithubProxies ?? []);
     }
 
     private async Task CheckForUpdatesAsync(

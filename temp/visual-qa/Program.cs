@@ -49,7 +49,7 @@ internal static class Program
         var settingsWindow = new HotkeySettingsWindow(
             HotkeySettings.Default,
             true,
-            "1.1.2",
+            "1.1.3",
             new UpdateNetworkSettings([
                 new GithubProxySetting(string.Empty, 8, true),
                 new GithubProxySetting("https://gh-proxy.org", 10),
@@ -64,12 +64,18 @@ internal static class Program
         Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf-minimum.png"), 680, 610);
         settingsWindow.Close();
 
-        var updateWindow = new UpdatePromptWindow("1.1.2", "1.2.0",
+        var updateWindow = new UpdatePromptWindow("1.1.3", "1.2.0",
             "新增自动更新支持。\n修复进程暂停恢复稳定性问题。");
         updateWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
         Render(updateWindow, Path.Combine(outputDirectory, "update-window-wpf.png"), 510, 310);
         updateWindow.Close();
+
+        var elevationWindow = new ElevationPromptWindow();
+        elevationWindow.Show();
+        application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        Render(elevationWindow, Path.Combine(outputDirectory, "elevation-window-wpf.png"), 470, 310);
+        elevationWindow.Close();
 
         window.Close();
         application.Shutdown();
@@ -239,6 +245,25 @@ internal static class Program
                 || !startupArguments.Any(argument => argument.Contains("--silent", StringComparison.Ordinal)))
             {
                 throw new InvalidOperationException("Startup task arguments are incomplete.");
+            }
+            var manifest = File.ReadAllText(Path.Combine(
+                Environment.CurrentDirectory, "src", "GamePause.App", "app.manifest"));
+            if (!manifest.Contains("requestedExecutionLevel level=\"asInvoker\"", StringComparison.Ordinal))
+                throw new InvalidOperationException("The application manifest does not allow the custom elevation prompt to run.");
+            var elevationStartInfo = ElevationService.CreateRestartStartInfo(
+                "C:\\Game Pause\\GamePause.exe", ["--silent", "--elevation-attempted"]);
+            if (!elevationStartInfo.UseShellExecute
+                || !string.Equals(elevationStartInfo.Verb, "runas", StringComparison.OrdinalIgnoreCase)
+                || !elevationStartInfo.ArgumentList.Contains("--silent")
+                || elevationStartInfo.ArgumentList.Count(argument =>
+                    string.Equals(argument, "--elevation-attempted", StringComparison.OrdinalIgnoreCase)) != 1)
+            {
+                throw new InvalidOperationException("Administrator restart arguments are incomplete.");
+            }
+            if (MainWindow.FormatSettingsSaveStatus(["网络与更新设置已保存"], [])
+                != "网络与更新设置已保存。")
+            {
+                throw new InvalidOperationException("Network-only settings feedback is incorrect.");
             }
             Console.WriteLine(File.ReadAllText(Path.Combine(directory, "ui-settings.json")));
             Console.WriteLine(File.ReadAllText(Path.Combine(directory, "profiles.json")));
