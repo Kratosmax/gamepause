@@ -118,18 +118,17 @@ internal static class Program
         return ownerProcessId > 0
                && File.Exists(packagePath)
                && Directory.Exists(targetDirectory)
-               && IsUnderProgramFiles(targetDirectory)
+               && IsCurrentInstallDirectory(targetDirectory)
                && expectedSha256.Length == 64 && expectedSha256.All(Uri.IsHexDigit)
-               && string.Equals(Path.GetExtension(appName), ".exe", StringComparison.OrdinalIgnoreCase);
+               && string.Equals(appName, "GamePause.exe", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsUnderProgramFiles(string path)
+    private static bool IsCurrentInstallDirectory(string path)
     {
-        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        if (string.IsNullOrWhiteSpace(programFiles)) return false;
-        var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var root = Path.GetFullPath(programFiles).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+        var target = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var updaterDirectory = Path.GetFullPath(AppContext.BaseDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(target, updaterDirectory, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void WaitForOwner(int ownerProcessId)
@@ -286,10 +285,12 @@ internal static class Program
 
     private static int RunSelfTest()
     {
+        if (!IsCurrentInstallDirectory(AppContext.BaseDirectory)) return 6;
         var directory = Path.Combine(Path.GetTempPath(), "GamePauseUpdaterTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         try
         {
+            if (IsCurrentInstallDirectory(directory)) return 7;
             File.WriteAllText(Path.Combine(directory, "existing.txt"), "old");
             using var package = new MemoryStream();
             using (var writer = new ZipArchive(package, ZipArchiveMode.Create, leaveOpen: true))

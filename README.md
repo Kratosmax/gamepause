@@ -1,6 +1,6 @@
 # Game Pause
 
-Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.1.0**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
+Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.1.1**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
 
 本项目只面向单机游戏或明确可暂停的本地进程，不注入游戏、不修改游戏内存数据，也不尝试绕过反作弊。
 
@@ -15,7 +15,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 ### 启动程序
 
 1. 推荐从 [GitHub Releases](https://github.com/Kratosmax/gamepause/releases) 下载 `GamePause-版本号-Setup.exe` 并安装。安装版支持自动更新。
-2. 也可以下载 ZIP 免安装版并完整解压；保持 `GamePause.exe`、`GamePause.Watchdog.exe` 和 `GamePause.Updater.exe` 位于同一目录。出于安全原因，免安装版只能检查更新，不能自动覆盖文件。
+2. 也可以下载 ZIP 免安装版并完整解压；保持 `GamePause.exe`、`GamePause.Watchdog.exe` 和 `GamePause.Updater.exe` 位于同一目录。1.1.1 起安装版和免安装版均可自动更新。
 3. 启动 `GamePause.exe`，在系统提示时允许管理员权限。
 4. 程序只允许一个实例运行。重复启动时会提示检查系统托盘并退出。
 
@@ -151,11 +151,11 @@ dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 ```
 
-输出目录为 `temp\release\GamePause-1.1.0\`，同时生成更新 ZIP 和系统安装包。发布目录中的三个可执行程序必须一起分发。
+输出目录为 `temp\release\GamePause-1.1.1\`，同时生成更新 ZIP 和系统安装包。发布目录中的三个可执行程序必须一起分发。
 
 ### 发布与自动更新
 
-推送与项目版本一致的标签（例如 `v1.1.0`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成自包含 Windows x64 程序、编译安装包、签名 `latest.json`，并创建 GitHub Release。
+推送与项目版本一致的标签（例如 `v1.1.1`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成自包含 Windows x64 程序、编译安装包、签名 `latest.json`，并创建 GitHub Release。
 
 仓库必须配置 Actions Secret `GAMEPAUSE_UPDATE_PRIVATE_KEY`。它保存与客户端内置公钥对应的 RSA 私钥；不得写入源码、日志或 Release 资产。更新清单固定发布为：
 
@@ -163,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 https://github.com/Kratosmax/gamepause/releases/latest/download/latest.json
 ```
 
-每次发布必须同步上传 `GamePause-版本号.zip`、`GamePause-版本号-Setup.exe`、`latest.json` 和 `SHA256SUMS.txt`。安装版位于 `Program Files`，可执行自动覆盖更新；免安装版只提示新版本，不执行覆盖。
+每次发布必须同步上传 `GamePause-版本号.zip`、`GamePause-版本号-Setup.exe`、`latest.json` 和 `SHA256SUMS.txt`。安装版和免安装版均可自动覆盖更新；更新器只允许覆盖自身所在目录。
 
 ### 项目结构
 
@@ -200,7 +200,7 @@ scripts/publish.ps1      本地发布脚本
 1. 只做满足需求的最小修改，不顺手重构无关代码。
 2. 不得移除系统关键进程黑名单、PID/启动时间校验、异常恢复记录、守护进程或退出恢复确认。
 3. 不要真实暂停系统关键进程、反作弊组件或在线游戏。测试必须使用模拟、纯逻辑测试或明确安全的自建测试进程。
-4. 更新功能必须保留清单签名、下载后二次哈希、程序集版本校验、ZIP 路径穿越防护、失败回滚和 Program Files 安装限制。
+4. 更新功能必须保留清单签名、下载后二次哈希、程序集版本校验、ZIP 路径穿越防护、失败回滚和更新器同目录限制。
 5. 不要生成、读取或提交正式发布私钥及其他密钥。
 6. UI 改动必须运行 temp/visual-qa/VisualQa.csproj，检查生成截图；核心逻辑改动必须运行完整核心测试和更新器自测。
 7. 完成后列出修改文件、关键原因、实际运行的命令与结果、截图位置和尚存风险。不能验证的部分必须明确说明。

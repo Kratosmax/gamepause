@@ -49,7 +49,7 @@ internal static class Program
         var settingsWindow = new HotkeySettingsWindow(
             HotkeySettings.Default,
             true,
-            "1.1.0",
+            "1.1.1",
             new UpdateNetworkSettings([
                 new GithubProxySetting(string.Empty, 8, true),
                 new GithubProxySetting("https://gh-proxy.org", 10),
@@ -64,7 +64,7 @@ internal static class Program
         Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf-minimum.png"), 680, 610);
         settingsWindow.Close();
 
-        var updateWindow = new UpdatePromptWindow("1.1.0", "1.2.0",
+        var updateWindow = new UpdatePromptWindow("1.1.1", "1.2.0",
             "新增自动更新支持。\n修复进程暂停恢复稳定性问题。");
         updateWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);

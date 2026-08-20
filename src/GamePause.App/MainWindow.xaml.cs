@@ -960,14 +960,6 @@ public partial class MainWindow : System.Windows.Window
 
             updateAccepted = true;
 
-            if (!UpdateService.IsSecureInstallLocation)
-            {
-                WpfMessageBox.Show(
-                    "自动更新只允许在 Program Files 的系统安装目录中执行。当前便携版目录可被普通权限程序修改，因此已阻止管理员覆盖更新。\n\n请在正式安装 Game Pause 后再更新。",
-                    "需要系统安装", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
-                return;
-            }
-
             _ = _suspensionService.ActiveSession;
             if (_store.LastLoadError is not null)
             {

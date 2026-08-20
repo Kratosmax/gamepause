@@ -22,9 +22,6 @@ internal static class UpdateService
     private static readonly Version CurrentVersion = typeof(UpdateService).Assembly.GetName().Version ?? new Version(0, 0, 0);
 
     internal static string CurrentVersionText => $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{Math.Max(0, CurrentVersion.Build)}";
-    internal static bool IsSecureInstallLocation => IsUnderDirectory(AppContext.BaseDirectory,
-        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
-
     internal static async Task<UpdateManifest?> CheckAsync(
         UpdateNetworkSettings? networkSettings = null,
         CancellationToken cancellationToken = default)
@@ -209,14 +206,6 @@ internal static class UpdateService
 
     private static bool IsHttpUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme is "http" or "https";
-
-    private static bool IsUnderDirectory(string path, string directory)
-    {
-        if (string.IsNullOrWhiteSpace(directory)) return false;
-        var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var fullDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
-    }
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
     {
