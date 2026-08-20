@@ -36,7 +36,7 @@ var tests = new (string Name, Action Run)[]
     ("Compatibility checker blocks anti-cheat and cautions launchers", TestCompatibilityChecker),
     ("Automatic pause rule honors focus-loss delay", TestAutoRuleTracker),
     ("Update version policy accepts only newer semantic versions", TestUpdateVersionPolicy),
-    ("Update manifests reject invalid signatures", TestUpdateManifestSignature)
+    ("Update manifests accept valid signatures and reject invalid signatures", TestUpdateManifestSignature)
 };
 
 var failures = 0;
@@ -313,6 +313,12 @@ static void TestUpdateVersionPolicy()
 
 static void TestUpdateManifestSignature()
 {
+    const string downloadUrl =
+        "https://github.com/Kratosmax/gamepause/releases/download/v1.0.0/GamePause-1.0.0.zip";
+    const string validSignature =
+        "dWqe7A0DWMUPSdjocUNA4sHiuChA/iocu38HbThyvCTQyWzaUuxrZG+zD9PzTALa8cW4mnqD6KFpXcDG0K8Qigf662iNDu+7yRJn+N6sjAKlb/K4dROnrAo+6GyMdz5PMC7tHZfM6JsY9TDshSSPvrFmyX3N7cJtxXA+HB3Rkp2ZJsKYkpZPDjO85ZNxcFDSUgc3Rl/Rk/FSNkYnPIH/IauVMVwsbmv1SFoztMKaVXTZ4n4F7DJAGKF7Ha3kxTj/JHE3bhxkNAAHvbDybynqo6H9u1Pl9H2P7S6QdV2FytcWSLGs/k4LGJ6qdBen8g0Bje/HTtYTQgSU9di4wU5Fqb0EMIG6rWnX4qxzF8yFqjirzePHlhaHmKK40DioEkdd0UDiGgBd33FznaTcOsmCF81VQWkh6pFZPv7eDVLESDCfvPGA7SqpEo1ZR8hVDMVD6JL5Mc59pA1FTw2cH4EyP+rsyYkf9HVEEq5CaR7U39/eGU8el+ifMl4DCqABjViH";
+    Assert(UpdateManifestSecurity.Verify("1.0.0", downloadUrl, new string('A', 64), validSignature),
+        "A manifest signed by the release key should be accepted.");
     Assert(!UpdateManifestSecurity.Verify(
             "1.0.0", "https://example.com/GamePause.zip", new string('A', 64), Convert.ToBase64String(new byte[256])),
         "An invalid update signature must be rejected.");

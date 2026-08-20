@@ -143,13 +143,15 @@ public static class UpdateManifestSecurity
 {
     private const string PublicKeyPem = """
         -----BEGIN PUBLIC KEY-----
-        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtnNgGPL6SbCcwDa4mSlm
-        Wx2Opjga2jep80WEu5cELHPeG+l/YikbMgW0jmJRrSxg3XG0Ke1PFMXWYzBUEhTV
-        jYd/n8rHzgxryXW5v/v4Lht6WHUV6iFtvk8OOKshKRldO4Djok1smCHtLo8vqU19
-        ZXHMrFFfTt9RrosxR7EZwBmvxEGCqOXm4yg1dZalJpm/IZyNRt0/LiXWHBp0eV7f
-        YTCrcQKRuNVBrkzqrbpG3gEl6jzES8u2sAqhj+o8rsoZelrE+zTlH5aRXq1dCUut
-        ugV5YinsL7vrfG/9D81l+X0gL2Ur344xrU9sao5IR5ZIpKdITxpsCX3jqu+kBNdS
-        7wIDAQAB
+        MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAmDrwow9Knuy8hcLecvki
+        s7GKmZsHvqyUOmu5ZgfvOSMhZ9kDfOvK+T8a0rtEi4Wj3EZ4k1RpvoSidKHGw3Ws
+        eV64xlnpdWuRq2XTejKtCyPWDCKrkf/xMBWh+K0g5ozfG6f++jNycuZZwF+yCx3Y
+        yqVFDO7WqiBcBVQaBsvsOoRWzN/sY/eVnHdy3l6HsLLkh029TNG/N3KD7Mo3G0N9
+        A8B7SeMNMQSV/SwkIT6JF2zWdrqfwRA4wo2IiuLUcpg1C6RDKs7B/HHnmXCzSHOz
+        +O/C2nX5CPjzfa1Z+OpUF/+flA70SQoMnHRIkhlWjgyEJ0dQUGa+qLMgzaWiZzz2
+        fgwYIoAqLu6xCkyey5s+8hRKjMQPgeh+7T8ChbnbzzrxRQMfi6CsNuEG1eLJf2o9
+        hWkoIqkNY6XBvsyh9hrS8V3NvgDgd2pWijlx+pzGWtAyIXOQrwYsuCEDQrxQK07h
+        z3opz7iw61rsb3Vll6b2fklfk0z0FkA2xDZX/n+S46p5AgMBAAE=
         -----END PUBLIC KEY-----
         """;
 

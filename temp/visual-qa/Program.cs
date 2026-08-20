@@ -46,13 +46,13 @@ internal static class Program
         Render(profileWindow, Path.Combine(outputDirectory, "game-profile-window-wpf.png"), 520, 610);
         profileWindow.Close();
 
-        var settingsWindow = new HotkeySettingsWindow(HotkeySettings.Default, true, "0.9.1");
+        var settingsWindow = new HotkeySettingsWindow(HotkeySettings.Default, true, "1.0.0");
         settingsWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
         Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-wpf.png"), 520, 515);
         settingsWindow.Close();
 
-        var updateWindow = new UpdatePromptWindow("0.9.1", "1.0.0",
+        var updateWindow = new UpdatePromptWindow("1.0.0", "1.1.0",
             "新增自动更新支持。\n修复进程暂停恢复稳定性问题。");
         updateWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);

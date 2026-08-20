@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Validate version
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v', 'V')
+          $project = [xml](Get-Content -Raw 'src/GamePause.App/GamePause.App.csproj')
+          $projectVersion = $project.Project.PropertyGroup.Version
+          if ($version -ne $projectVersion) {
+            throw "Tag version $version does not match project version $projectVersion."
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build release assets
+        shell: pwsh
+        run: ./scripts/publish.ps1 -Version $env:RELEASE_VERSION
+
+      - name: Create signed update manifest
+        shell: pwsh
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.GAMEPAUSE_UPDATE_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_PRIVATE_KEY)) {
+            throw 'GAMEPAUSE_UPDATE_PRIVATE_KEY is not configured.'
+          }
+          $keyDirectory = 'temp/signing'
+          $keyPath = Join-Path $keyDirectory 'update-private.pem'
+          New-Item -ItemType Directory -Path $keyDirectory -Force | Out-Null
+          $utf8NoBom = New-Object Text.UTF8Encoding($false)
+          [IO.File]::WriteAllText($keyPath, $env:UPDATE_PRIVATE_KEY, $utf8NoBom)
+          try {
+            ./scripts/New-UpdateManifest.ps1 `
+              -Version $env:RELEASE_VERSION `
+              -PackagePath "temp/release/GamePause-$env:RELEASE_VERSION.zip" `
+              -PrivateKeyPath $keyPath `
+              -ReleaseNotes "请查看 GitHub Release 中的版本说明。" `
+              -OutputPath 'temp/release/latest.json'
+          }
+          finally {
+            Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
+          }
+          $files = @(
+            "temp/release/GamePause-$env:RELEASE_VERSION.zip",
+            "temp/release/GamePause-$env:RELEASE_VERSION-Setup.exe"
+          )
+          $checksums = foreach ($file in $files) {
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+            "$hash  $([IO.Path]::GetFileName($file))"
+          }
+          $checksums | Out-File 'temp/release/SHA256SUMS.txt' -Encoding ascii
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            "temp/release/GamePause-$env:RELEASE_VERSION-Setup.exe",
+            "temp/release/GamePause-$env:RELEASE_VERSION.zip",
+            'temp/release/latest.json',
+            'temp/release/SHA256SUMS.txt'
+          )
+          $notesPath = "docs/releases/v$env:RELEASE_VERSION.md"
+          if (Test-Path -LiteralPath $notesPath) {
+            gh release create "v$env:RELEASE_VERSION" $assets `
+              --title "Game Pause $env:RELEASE_VERSION" --notes-file $notesPath --verify-tag
+          }
+          else {
+            gh release create "v$env:RELEASE_VERSION" $assets `
+              --title "Game Pause $env:RELEASE_VERSION" --generate-notes --verify-tag
+          }

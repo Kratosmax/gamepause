@@ -16,8 +16,8 @@ internal sealed record PreparedUpdate(string Version, string PackagePath, string
 
 internal static class UpdateService
 {
-    // Placeholder until the GitHub Releases repository and update feed are published.
-    internal const string ManifestUrl = "https://example.invalid/game-pause/latest.json";
+    internal const string ManifestUrl =
+        "https://github.com/Kratosmax/gamepause/releases/latest/download/latest.json";
     private static readonly Version CurrentVersion = typeof(UpdateService).Assembly.GetName().Version ?? new Version(0, 0, 0);
 
     internal static string CurrentVersionText => $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{Math.Max(0, CurrentVersion.Build)}";

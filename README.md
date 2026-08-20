@@ -1,6 +1,6 @@
 # Game Pause
 
-Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **0.9.1**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
+Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.0.0**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
 
 本项目只面向单机游戏或明确可暂停的本地进程，不注入游戏、不修改游戏内存数据，也不尝试绕过反作弊。
 
@@ -14,9 +14,10 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 
 ### 启动程序
 
-1. 解压完整发布包，保持 `GamePause.exe`、`GamePause.Watchdog.exe` 和 `GamePause.Updater.exe` 位于同一目录。
-2. 双击 `GamePause.exe`，在系统提示时允许管理员权限。
-3. 程序只允许一个实例运行。重复启动时会提示检查系统托盘并退出。
+1. 推荐从 [GitHub Releases](https://github.com/Kratosmax/gamepause/releases) 下载 `GamePause-版本号-Setup.exe` 并安装。安装版支持自动更新。
+2. 也可以下载 ZIP 免安装版并完整解压；保持 `GamePause.exe`、`GamePause.Watchdog.exe` 和 `GamePause.Updater.exe` 位于同一目录。出于安全原因，免安装版只能检查更新，不能自动覆盖文件。
+3. 启动 `GamePause.exe`，在系统提示时允许管理员权限。
+4. 程序只允许一个实例运行。重复启动时会提示检查系统托盘并退出。
 
 关闭主窗口不会退出程序，而是转入系统托盘。第一次关闭时会提示一次，后续静默进入托盘。需要彻底退出时，请使用托盘菜单中的退出命令。
 
@@ -103,7 +104,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 - PowerShell 5.1 或更高版本。
 - Git（仅获取和提交源码时需要）。
 
-项目不依赖外部 NuGet 包，`NuGet.Config` 已清空外部包源。
+项目不依赖第三方 NuGet 包，`NuGet.Config` 已清空外部包源。生成自包含发布包时，发布脚本会从 NuGet 官方源下载 Microsoft .NET 的 `win-x64` 运行时包。
 
 ### 获取源码
 
@@ -148,7 +149,19 @@ dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 ```
 
-输出目录为 `temp\release\GamePause-0.9.1\`，压缩包为 `temp\release\GamePause-0.9.1.zip`。发布目录中的三个可执行程序必须一起分发。
+输出目录为 `temp\release\GamePause-1.0.0\`，同时生成更新 ZIP 和系统安装包。发布目录中的三个可执行程序必须一起分发。
+
+### 发布与自动更新
+
+推送与项目版本一致的标签（例如 `v1.0.0`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成自包含 Windows x64 程序、编译安装包、签名 `latest.json`，并创建 GitHub Release。
+
+仓库必须配置 Actions Secret `GAMEPAUSE_UPDATE_PRIVATE_KEY`。它保存与客户端内置公钥对应的 RSA 私钥；不得写入源码、日志或 Release 资产。更新清单固定发布为：
+
+```text
+https://github.com/Kratosmax/gamepause/releases/latest/download/latest.json
+```
+
+每次发布必须同步上传 `GamePause-版本号.zip`、`GamePause-版本号-Setup.exe`、`latest.json` 和 `SHA256SUMS.txt`。安装版位于 `Program Files`，可执行自动覆盖更新；免安装版只提示新版本，不执行覆盖。
 
 ### 项目结构
 
