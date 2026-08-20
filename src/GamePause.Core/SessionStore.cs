@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace GamePause.Core;
 
@@ -24,6 +26,33 @@ public sealed class SessionStore
     public string BackupFilePath { get; }
     public string LogFilePath { get; }
     public string? LastLoadError { get; private set; }
+    public bool DebugLoggingEnabled { get; set; }
+
+    internal IDisposable AcquireOperationLock()
+    {
+        var normalizedDirectory = Path.GetFullPath(DataDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .ToUpperInvariant();
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedDirectory)));
+        var mutex = new Mutex(false, $@"Local\GamePause.Session.{hash}");
+        try
+        {
+            try
+            {
+                mutex.WaitOne();
+            }
+            catch (AbandonedMutexException)
+            {
+                Log("Recovered an abandoned pause-operation lock.");
+            }
+            return new OperationLock(mutex);
+        }
+        catch
+        {
+            mutex.Dispose();
+            throw;
+        }
+    }
 
     public SuspensionSession? Load()
     {
@@ -147,10 +176,43 @@ public sealed class SessionStore
             $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}");
     }
 
+    public void LogProcessTree(string stage, ProcessIdentity root, IEnumerable<ProcessIdentity> processes)
+    {
+        if (!DebugLoggingEnabled) return;
+        var snapshot = processes
+            .OrderBy(process => process.Depth)
+            .ThenBy(process => process.ProcessId)
+            .ToArray();
+        Log($"{stage} process tree for {root.Name} ({root.ProcessId}); {snapshot.Length} process(es).");
+        foreach (var process in snapshot)
+        {
+            Log($"Process tree item: depth={process.Depth}; pid={process.ProcessId}; parent={process.ParentProcessId}; "
+                + $"name={process.Name}; path={process.ExecutablePath ?? "unavailable"}");
+        }
+    }
+
+    public void LogDebug(string message)
+    {
+        if (DebugLoggingEnabled) Log(message);
+    }
+
     private sealed record LegacySuspensionSession(
         Guid SessionId,
         DateTimeOffset CreatedAt,
         string TargetName,
         int RootProcessId,
         IReadOnlyList<SessionProcess> Processes);
+
+    private sealed class OperationLock(Mutex mutex) : IDisposable
+    {
+        private Mutex? _mutex = mutex;
+
+        public void Dispose()
+        {
+            var current = Interlocked.Exchange(ref _mutex, null);
+            if (current is null) return;
+            current.ReleaseMutex();
+            current.Dispose();
+        }
+    }
 }

@@ -72,6 +72,7 @@ public partial class MainWindow : System.Windows.Window
         _hotkeySettings = _hotkeyStore.Load();
         _uiSettingsStore = new UiSettingsStore(_store.DataDirectory);
         _uiSettings = _uiSettingsStore.Load();
+        _store.DebugLoggingEnabled = _uiSettings.DebugModeEnabled;
         _closeToTrayNoticeShown = _uiSettings.CloseToTrayNoticeShown;
         _profileStore = new GameProfileStore(_store.DataDirectory);
         _profiles = _profileStore.Load().ToList();
@@ -351,8 +352,23 @@ public partial class MainWindow : System.Windows.Window
         if (_refreshingRows || sender is not System.Windows.Controls.CheckBox { DataContext: AvailableProcessRow row }) return;
         row.IsChecked = (sender as System.Windows.Controls.CheckBox)?.IsChecked == true;
         if (row.Source is null) return;
-        if (row.IsChecked) _checkedProcesses[row.ProcessId] = row.Source.ToRootIdentity();
-        else _checkedProcesses.Remove(row.ProcessId);
+        if (row.IsChecked)
+        {
+            var root = row.Source.ToRootIdentity();
+            _checkedProcesses[row.ProcessId] = root;
+            try
+            {
+                _store.LogProcessTree("Selection preview", root, _catalog.GetProcessTree(row.ProcessId));
+            }
+            catch (Exception exception)
+            {
+                _store.Log($"Selection process tree failed for {root.Name} ({root.ProcessId}): {exception.Message}");
+            }
+        }
+        else
+        {
+            _checkedProcesses.Remove(row.ProcessId);
+        }
         UpdateSelectionSummary();
     }
 
@@ -397,7 +413,7 @@ public partial class MainWindow : System.Windows.Window
             foreground.ExecutablePath, foreground.StartTimeUtcTicks);
         if (!ConfirmCompatibility([foregroundInfo])) return;
         SetBusy(true, "正在暂停前台进程树...");
-        FinishOperation(await Task.Run(() => _suspensionService.SuspendTree(foreground)));
+        FinishOperation(await Task.Run(() => _suspensionService.SuspendTree(foreground)), allowElevationPrompt: true);
     }
 
     private async Task PauseCheckedAsync()
@@ -410,7 +426,7 @@ public partial class MainWindow : System.Windows.Window
         SetBusy(true, $"正在暂停 {identities.Length} 个程序的进程树...");
         var result = await Task.Run(() => _suspensionService.SuspendTrees(identities));
         if (result.Success) _checkedProcesses.Clear();
-        FinishOperation(result);
+        FinishOperation(result, allowElevationPrompt: true);
     }
 
     private async Task DeepPauseCheckedAsync()
@@ -427,7 +443,7 @@ public partial class MainWindow : System.Windows.Window
         SetBusy(true, $"正在深度暂停 {identities.Length} 个程序...");
         var result = await Task.Run(() => _suspensionService.SuspendTrees(identities, trimWorkingSets: true));
         if (result.Success) _checkedProcesses.Clear();
-        FinishOperation(result);
+        FinishOperation(result, allowElevationPrompt: true);
     }
 
     private async Task ResumeCheckedAsync()
@@ -457,13 +473,43 @@ public partial class MainWindow : System.Windows.Window
         FinishOperation(await Task.Run(() => _suspensionService.ResumeTargets([targetId])));
     }
 
-    private void FinishOperation(OperationResult result)
+    private void FinishOperation(OperationResult result, bool allowElevationPrompt = false)
     {
         SetBusy(false, result.Message, result.Success ? StateTone.Success : StateTone.Error);
         RefreshAllLists();
         var activeCount = _suspensionService.ActiveSession?.Targets.Count ?? 0;
         _notifyIcon.Text = activeCount > 0 ? $"Game Pause - 已暂停 {activeCount} 个程序" : "Game Pause";
         RefreshProfileRows();
+        if (allowElevationPrompt && result.RequiresElevation && !ElevationService.IsAdministrator())
+        {
+            RequestElevationForProtectedTarget();
+        }
+    }
+
+    private void RequestElevationForProtectedTarget()
+    {
+        var prompt = new ElevationPromptWindow { Owner = this };
+        if (prompt.ShowDialog() != true)
+        {
+            _store.Log("User cancelled the on-demand administrator restart prompt.");
+            return;
+        }
+
+        var launchResult = ElevationService.RestartAsAdministrator([], out var error);
+        _store.Log($"On-demand administrator restart result: {launchResult}; error: {error ?? "none"}.");
+        if (launchResult == ElevationLaunchResult.Started)
+        {
+            _allowExit = true;
+            Close();
+            return;
+        }
+        if (launchResult == ElevationLaunchResult.Cancelled) return;
+
+        WpfMessageBox.Show(
+            $"无法以管理员身份重新启动 Game Pause。\n\n{error ?? "Windows 未返回详细原因。"}",
+            "启动失败",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Error);
     }
 
     private async Task ExitAsync()
@@ -600,7 +646,7 @@ public partial class MainWindow : System.Windows.Window
         SetBusy(true, automatic ? $"正在按规则暂停 {profile.DisplayName}..." : $"正在暂停 {profile.DisplayName}...");
         var result = await Task.Run(() => _suspensionService.SuspendTrees(
             [process.ToRootIdentity()], profile.PauseMode == GamePauseMode.Deep));
-        FinishOperation(result);
+        FinishOperation(result, allowElevationPrompt: !automatic);
         if (automatic && result.Success)
         {
             _notifyIcon.ShowBalloonTip(1800, "自动暂停", $"{profile.DisplayName} 已失去前台并自动暂停。", Forms.ToolTipIcon.Info);
@@ -899,12 +945,14 @@ public partial class MainWindow : System.Windows.Window
             startupEnabled,
             UpdateService.CurrentVersionText,
             _uiSettings.EffectiveUpdateNetwork,
+            _uiSettings.DebugModeEnabled,
             (owner, networkSettings) => CheckForUpdatesAsync(userInitiated: true, owner, networkSettings)) { Owner = this };
         if (dialog.ShowDialog() != true) return;
         var hotkeysChanged = dialog.SelectedSettings != _hotkeySettings;
         var networkChanged = !NetworkSettingsEqual(
             dialog.SelectedUpdateNetworkSettings, _uiSettings.EffectiveUpdateNetwork);
         var startupChanged = dialog.StartupEnabled != startupEnabled;
+        var debugModeChanged = dialog.DebugModeEnabled != _uiSettings.DebugModeEnabled;
         if (hotkeysChanged && !TryApplyHotkeySettings(dialog.SelectedSettings))
         {
             WpfMessageBox.Show("快捷键注册失败：组合键可能已被其他程序占用。原快捷键已恢复。", "快捷键冲突",
@@ -939,6 +987,20 @@ public partial class MainWindow : System.Windows.Window
                 WpfMessageBox.Show("网络与更新设置已在本次运行中生效，但无法写入 ui-settings.json。", "设置保存失败",
                     System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
                 failures.Add("网络与更新设置已生效，但无法保存到磁盘");
+            }
+        }
+
+        if (debugModeChanged)
+        {
+            _uiSettings = _uiSettings with { DebugModeEnabled = dialog.DebugModeEnabled };
+            _store.DebugLoggingEnabled = dialog.DebugModeEnabled;
+            if (_uiSettingsStore.Save(_uiSettings))
+            {
+                successes.Add(dialog.DebugModeEnabled ? "Debug 日志已开启" : "Debug 日志已关闭");
+            }
+            else
+            {
+                failures.Add("Debug 模式已在本次运行中生效，但无法保存到磁盘");
             }
         }
 

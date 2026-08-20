@@ -80,7 +80,8 @@ internal sealed record UpdateNetworkSettings(
 internal sealed record UiSettings(
     bool CloseToTrayNoticeShown,
     string? SkippedUpdateVersion = null,
-    UpdateNetworkSettings? UpdateNetwork = null)
+    UpdateNetworkSettings? UpdateNetwork = null,
+    bool DebugModeEnabled = false)
 {
     internal static UiSettings Default { get; } = new(false, null, UpdateNetworkSettings.Default);
     internal UpdateNetworkSettings EffectiveUpdateNetwork => (UpdateNetwork ?? UpdateNetworkSettings.Default).Normalize();

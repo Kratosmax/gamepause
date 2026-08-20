@@ -1,3 +1,5 @@
+using System.ComponentModel;
+
 namespace GamePause.Core;
 
 public sealed class ProcessSuspensionService
@@ -28,6 +30,7 @@ public sealed class ProcessSuspensionService
     {
         lock (_syncRoot)
         {
+            using var operationLock = _store.AcquireOperationLock();
             var existing = _store.Load();
             if (existing is null && _store.LastLoadError is not null)
                 return new OperationResult(false, _store.LastLoadError);
@@ -50,8 +53,22 @@ public sealed class ProcessSuspensionService
                 {
                     continue;
                 }
+                var excludedProcessIds = new HashSet<int>();
+                foreach (var process in tree.OrderBy(process => process.Depth))
+                {
+                    if (_safetyPolicy.IsProtected(process) || excludedProcessIds.Contains(process.ParentProcessId))
+                    {
+                        excludedProcessIds.Add(process.ProcessId);
+                        _store.LogDebug($"Pause safety exclusion: depth={process.Depth}; pid={process.ProcessId}; "
+                            + $"parent={process.ParentProcessId}; name={process.Name}; path={process.ExecutablePath ?? "unavailable"}");
+                    }
+                }
+                if (excludedProcessIds.Count > 0)
+                {
+                    _store.Log($"Pause safety excluded {excludedProcessIds.Count} protected process(es) from {currentRoot.Name} ({currentRoot.ProcessId}).");
+                }
                 var safeProcesses = tree
-                    .Where(process => !_safetyPolicy.IsProtected(process))
+                    .Where(process => !excludedProcessIds.Contains(process.ProcessId))
                     .Where(process => !claimedProcessIds.Contains(process.ProcessId))
                     .OrderByDescending(process => process.Depth)
                     .ThenByDescending(process => process.ProcessId)
@@ -91,10 +108,13 @@ public sealed class ProcessSuspensionService
             var suspendedTargets = 0;
             var suspendedProcesses = 0;
             var trimmedProcesses = 0;
+            var accessDeniedProcesses = 0;
             foreach (var target in newTargets)
             {
                 var currentTarget = target;
                 _store.Log($"Pause requested for {target.TargetName} ({target.RootProcessId}); {target.Processes.Count} process(es).");
+                var root = target.Processes.First(process => process.Identity.ProcessId == target.RootProcessId).Identity;
+                _store.LogProcessTree("Pause", root, target.Processes.Select(process => process.Identity));
                 var states = target.Processes.ToArray();
                 var targetSuspendedCount = 0;
                 for (var index = 0; index < states.Length; index++)
@@ -135,6 +155,12 @@ public sealed class ProcessSuspensionService
                         states[index] = states[index] with { State = SuspensionState.Skipped, Error = exception.Message };
                         _store.Log($"Suspend skipped for {states[index].Identity.Name} ({states[index].Identity.ProcessId}): {exception.Message}");
                     }
+                    catch (Win32Exception exception) when (exception.NativeErrorCode == 5)
+                    {
+                        accessDeniedProcesses++;
+                        states[index] = states[index] with { State = SuspensionState.Failed, Error = exception.Message };
+                        _store.Log($"Suspend access denied for {states[index].Identity.Name} ({states[index].Identity.ProcessId}).");
+                    }
                     catch (Exception exception)
                     {
                         states[index] = states[index] with { State = SuspensionState.Failed, Error = exception.Message };
@@ -160,12 +186,20 @@ public sealed class ProcessSuspensionService
             }
 
             var success = suspendedTargets > 0;
-            var message = success && trimWorkingSets
+            var message = success && accessDeniedProcesses > 0
+                ? $"已暂停 {suspendedTargets} 个程序，但有 {accessDeniedProcesses} 个进程权限不足；请恢复后以管理员身份重试。"
+                : success && trimWorkingSets
                 ? $"已深度暂停 {suspendedTargets} 个程序；{trimmedProcesses}/{suspendedProcesses} 个相关进程完成工作集回收。"
                 : success
                 ? $"已暂停 {suspendedTargets} 个程序，共 {suspendedProcesses} 个相关进程。"
+                : accessDeniedProcesses > 0
+                ? "目标进程拒绝访问，需要管理员权限才能暂停。"
                 : "Windows 未允许暂停任何已选进程。";
-            return new OperationResult(success, message, targets.Count > 0 ? session : null);
+            return new OperationResult(
+                success,
+                message,
+                targets.Count > 0 ? session : null,
+                RequiresElevation: !success && accessDeniedProcesses > 0);
         }
     }
 
@@ -173,6 +207,7 @@ public sealed class ProcessSuspensionService
     {
         lock (_syncRoot)
         {
+            using var operationLock = _store.AcquireOperationLock();
             var requested = targetIds.ToHashSet();
             return ResumeMatching(target => requested.Contains(target.TargetId));
         }
@@ -182,6 +217,34 @@ public sealed class ProcessSuspensionService
     {
         lock (_syncRoot)
         {
+            using var operationLock = _store.AcquireOperationLock();
+            return ResumeMatching(_ => true);
+        }
+    }
+
+    public OperationResult ResumeActiveSessionIfStable()
+    {
+        lock (_syncRoot)
+        {
+            using var operationLock = _store.AcquireOperationLock();
+            var session = _store.Load();
+            if (session is null)
+            {
+                if (_store.LastLoadError is not null)
+                    return new OperationResult(false, _store.LastLoadError);
+                return new OperationResult(true, "没有暂停中的程序。");
+            }
+
+            var states = session.Targets.SelectMany(target => target.Processes).ToArray();
+            if (states.Any(state => state.State is SuspensionState.Planned or SuspensionState.Suspending))
+            {
+                return new OperationResult(false, "暂停事务仍在执行，Watchdog 已跳过本次自动恢复。", session);
+            }
+            if (!states.Any(state => state.State == SuspensionState.Suspended))
+            {
+                return new OperationResult(true, "没有已稳定暂停的程序。", session);
+            }
+
             return ResumeMatching(_ => true);
         }
     }
@@ -190,6 +253,7 @@ public sealed class ProcessSuspensionService
     {
         lock (_syncRoot)
         {
+            using var operationLock = _store.AcquireOperationLock();
             var session = _store.Load();
             if (session is null)
             {

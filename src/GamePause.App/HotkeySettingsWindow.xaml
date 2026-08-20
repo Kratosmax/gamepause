@@ -174,33 +174,41 @@
                     <Grid Margin="18,16,18,12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="34" /><RowDefinition Height="62" />
-                            <RowDefinition Height="24" /><RowDefinition Height="36" />
-                            <RowDefinition Height="62" /><RowDefinition Height="62" />
+                            <RowDefinition Height="62" /><RowDefinition Height="24" />
+                            <RowDefinition Height="36" /><RowDefinition Height="62" />
+                            <RowDefinition Height="62" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="常规" FontSize="17" FontWeight="SemiBold" />
                         <Grid Grid.Row="1">
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="开机静默启动" FontWeight="SemiBold" />
-                                <TextBlock Text="登录 Windows 后以最高权限进入系统托盘" Foreground="#64748B" Margin="0,4,0,0" />
+                                <TextBlock Text="普通权限静默进入托盘；受限目标按需提权" Foreground="#64748B" Margin="0,4,0,0" />
                             </StackPanel>
                             <CheckBox x:Name="StartupCheck" HorizontalAlignment="Right" VerticalAlignment="Center" />
                         </Grid>
-                        <Border Grid.Row="2" BorderBrush="#C8D4DE" BorderThickness="0,1,0,0" Margin="0,10,0,0" />
-                        <TextBlock Grid.Row="3" Text="快捷键" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Bottom" />
-                        <Grid Grid.Row="4">
+                        <Grid Grid.Row="2">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Debug 模式" FontWeight="SemiBold" />
+                                <TextBlock Text="记录进程树、父子关系和程序路径" Foreground="#64748B" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <CheckBox x:Name="DebugModeCheck" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                        <Border Grid.Row="3" BorderBrush="#C8D4DE" BorderThickness="0,1,0,0" Margin="0,10,0,0" />
+                        <TextBlock Grid.Row="4" Text="快捷键" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Bottom" />
+                        <Grid Grid.Row="5">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="155" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <TextBlock Text="暂停 / 恢复" FontWeight="SemiBold" VerticalAlignment="Center" />
                             <TextBox x:Name="ToggleBox" Grid.Column="1" Height="36" IsReadOnly="True"
                                      VerticalContentAlignment="Center" Padding="10,0" PreviewKeyDown="ToggleBox_PreviewKeyDown" />
                         </Grid>
-                        <Grid Grid.Row="5">
+                        <Grid Grid.Row="6">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="155" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <TextBlock Text="紧急全部恢复" FontWeight="SemiBold" VerticalAlignment="Center" />
                             <TextBox x:Name="EmergencyBox" Grid.Column="1" Height="36" IsReadOnly="True"
                                      VerticalContentAlignment="Center" Padding="10,0" PreviewKeyDown="EmergencyBox_PreviewKeyDown" />
                         </Grid>
-                        <TextBlock Grid.Row="6" Margin="0,8,0,0" Foreground="#64748B" TextWrapping="Wrap"
+                        <TextBlock Grid.Row="7" Margin="0,8,0,0" Foreground="#64748B" TextWrapping="Wrap"
                                    Text="点击输入框后直接按组合键，至少包含 Ctrl、Alt 或 Shift。" />
                     </Grid>
                 </TabItem>

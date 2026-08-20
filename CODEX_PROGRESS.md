@@ -23,40 +23,47 @@ git describe --tags --always --dirty
 
 ## 当前快照
 
-最后校准：2026-08-20（Asia/Shanghai）
+最后校准：2026-08-21（Asia/Shanghai）
 
 | 项目 | 已核实状态 |
 | --- | --- |
 | 仓库 | `git@github.com:Kratosmax/gamepause.git` |
 | 默认分支 | `main` |
-| 当前版本 | `1.1.4` |
+| 当前版本 | `1.2.0`（待发布候选） |
 | 本地最新标签 | `v1.1.4` |
-| 产品代码基线 | `16e967c659bbedf2f86e251ef761e0a8347ab3c0`（`v1.1.4`，本轮未改产品代码） |
+| 产品代码基线 | `67eb2334030c530a3a97710299201232a70de27d`；当前工作树含未提交的 `1.2.0` 修复与发布变更 |
 | Git 身份 | 仓库级 `小火车 <kratosthemax@gmail.com>` |
 | 技术栈 | .NET 8、WPF、Windows 10/11 x64 |
 | 线上状态 | 本轮未联网复核 Actions 与 Release，不得仅凭本表宣称线上正常 |
 
-本轮工作是建立跨会话接续机制。仓库内新增本文件并更新 README 的 AI 接手入口；用户已授权同步 README、提交并推送到 `origin/main`，不包含标签或 Release。跨设备是否已经可用应以远程分支和本地同步状态为准，不能只看本段文字。个人 skill 的同步不属于本仓库依赖。
+本轮实机日志确认旧版冻结 `douyin.exe` 时会连带暂停 `douyin_tray.exe` 和 Windows App Runtime 的 `DynamicDependencyLifetimeManagerShadow.exe`。`1.2.0` 候选已排除这两个节点及其整个后代分支，并增加任务栏连续无响应自动恢复、跨进程暂停/恢复互斥、可开关 Debug 日志和按需管理员权限。没有加入抖音阻止规则或红色 UI 状态。改动尚未提交、推送或发布，不能宣称线上已更新。
 
 ### 本轮验证记录
 
-- 2026-08-20：`git diff --check` 通过，12 个文档引用的仓库路径均存在。
-- 2026-08-20：`desktop-tool-ui-release` skill 结构校验通过。
-- 本轮只修改文档和个人 skill，没有修改产品代码，因此未运行产品编译、核心测试、更新器自测或 UI 视觉验收。
+- 2026-08-21：`dotnet restore GamePause.sln --configfile NuGet.Config` 通过。
+- 2026-08-21：Release 构建通过，0 个警告、0 个错误；核心测试 29/29 通过；源码与打包后更新器安装、回滚和路径穿越自测通过。
+- 2026-08-21：设置持久化测试通过；WPF 主窗口、设置页和提权弹窗截图通过人工检查，视觉宿主新增纯黑截图失败门禁并通过自测。
+- 2026-08-21：`scripts/publish.ps1` 成功生成 `1.2.0` 的 Full Setup、Lite Setup、Full ZIP、Lite ZIP；版本、运行时包含关系和 `full`/`lite` 通道标记已核对。
+- 2026-08-21：从 GitHub Release 下载原始 `1.1.4` Full/Lite 包，旧客户端自身的包预检逻辑均接受对应的本地 `1.2.0` 候选 ZIP。
+- 尚未对修复后的正式包再次执行真实抖音暂停测试；不同抖音版本的进程结构仍需观察。
 
 ## 当前产品状态
 
 - 主程序支持多选暂停/恢复、普通与深度暂停、紧急全部恢复、前台筛选和搜索。
 - 支持游戏档案、按游戏自动规则、托盘控制、全局快捷键、开机静默启动和兼容性提示。
 - 暂停状态写入 `%LocalAppData%\GamePause`，主程序重启和 Watchdog 会尝试恢复；PID 与启动时间用于防止 PID 复用误操作。
-- 启动时要求管理员权限并限制单实例；关闭窗口默认进入托盘，退出时若仍有暂停目标会询问恢复。
+- 默认普通权限启动并限制单实例；用户主动暂停遇到拒绝访问时才询问提权，自动暂停不会弹 UAC。关闭窗口默认进入托盘，退出时若仍有暂停目标会询问恢复。
+- 安全策略排除抖音托盘、Windows App Runtime DDLM 及其后代分支；稳定暂停期间 Watchdog 连续检测到任务栏无响应会自动恢复。
+- 设置可开关 Debug 模式；详细进程树、父子 PID、路径和安全排除详情仅在开启后记录。
 - 自动更新支持签名清单、SHA-256、包内版本、通道和 ZIP 路径校验、失败回滚、下载上限与停滞超时。
 - Full/Lite 使用独立更新通道。`1.1.4` 修复了旧版从 ZIP 条目读取程序集版本时要求流可 Seek 的问题。
 - `0.9.1` 至 `1.1.3` 无法自动升级到 `1.1.4`，需要手动安装一次；README 和 `docs/releases/v1.1.4.md` 已记录该过渡方案。
 
 ## 当前待办
 
-当前没有已授权但未完成的产品代码任务。已知后续工作：
+`1.2.0` 已获用户授权提交、推送和发布。下一步是审阅完整差异，提交并推送 `main`，创建 `v1.2.0` 标签，等待 Actions 发布完成，再核验四个正式包、三个清单、签名、SHA-256 和 latest 路由。发布后还需用线上签名清单和资产补齐真实下载链验证。
+
+其他已知后续工作：
 
 - 在真实 Windows 10/11 设备上验证 UI、管理员启动、托盘、开机任务、安装/卸载和自动更新。
 - 真机验证目标游戏：地府有点忙、多少兄弟？、千棋百计、黑神话：悟空、幻兽帕鲁。
@@ -68,15 +75,15 @@ git describe --tags --always --dirty
 
 | 范围 | 文件 |
 | --- | --- |
-| 程序启动、提权、单实例 | `src/GamePause.App/Program.cs`、`ElevationService.cs` |
+| 程序启动、按需提权、单实例 | `src/GamePause.App/Program.cs`、`ElevationService.cs` |
 | 主窗口和主要交互 | `src/GamePause.App/MainWindow.xaml`、`MainWindow.xaml.cs` |
 | 进程暂停与恢复 | `src/GamePause.Core/ProcessSuspensionService.cs`、`NativeProcessApi.cs` |
-| 恢复记录与日志 | `src/GamePause.Core/SessionStore.cs`、`DiagnosticLog.cs` |
+| 恢复记录、跨进程互斥与日志 | `src/GamePause.Core/SessionStore.cs`、`DiagnosticLog.cs` |
 | 安全与兼容性 | `src/GamePause.Core/SafetyPolicy.cs`、`GameProfiles.cs` |
 | 设置、快捷键和代理 | `HotkeySettingsWindow.*`、`HotkeySettings.cs`、`UiSettings.cs` |
 | 游戏档案 | `GameProfileWindow.*`、`GameProfileStore.cs` |
 | 更新检查与安装 | `UpdateService.cs`、`src/GamePause.Updater/Program.cs` |
-| 异常恢复守护 | `src/GamePause.Watchdog/Program.cs`、`WatchdogLauncher.cs` |
+| 异常与 Shell 卡顿恢复守护 | `src/GamePause.Watchdog/Program.cs`、`ShellHealthProbe.cs`、`WatchdogLauncher.cs` |
 | 核心回归测试 | `tests/GamePause.CoreTests/Program.cs` |
 | 打包、清单和发布 | `scripts/publish.ps1`、`scripts/New-UpdateManifest.ps1`、`.github/workflows/release.yml` |
 | 安装器 | `installer/GamePause.iss` |

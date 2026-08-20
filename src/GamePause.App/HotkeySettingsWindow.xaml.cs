@@ -20,6 +20,7 @@ public partial class HotkeySettingsWindow : System.Windows.Window
         bool startupEnabled,
         string currentVersion,
         UpdateNetworkSettings currentNetworkSettings,
+        bool debugModeEnabled,
         Func<System.Windows.Window, UpdateNetworkSettings, Task>? checkForUpdates = null)
     {
         InitializeComponent();
@@ -29,6 +30,7 @@ public partial class HotkeySettingsWindow : System.Windows.Window
         ToggleBox.Text = current.Toggle.DisplayText;
         EmergencyBox.Text = current.Emergency.DisplayText;
         StartupCheck.IsChecked = startupEnabled;
+        DebugModeCheck.IsChecked = debugModeEnabled;
         CurrentVersionText.Text = $"当前版本 {currentVersion}";
         CheckUpdateButton.IsEnabled = checkForUpdates is not null;
 
@@ -50,6 +52,7 @@ public partial class HotkeySettingsWindow : System.Windows.Window
 
     internal HotkeySettings SelectedSettings { get; private set; } = HotkeySettings.Default;
     internal bool StartupEnabled { get; private set; }
+    internal bool DebugModeEnabled { get; private set; }
     internal UpdateNetworkSettings SelectedUpdateNetworkSettings { get; private set; } = UpdateNetworkSettings.Default;
 
     internal void ShowNetworkSettingsForVisualQa()
@@ -146,6 +149,7 @@ public partial class HotkeySettingsWindow : System.Windows.Window
 
         SelectedSettings = new HotkeySettings(_toggleGesture, _emergencyGesture);
         StartupEnabled = StartupCheck.IsChecked == true;
+        DebugModeEnabled = DebugModeCheck.IsChecked == true;
         SelectedUpdateNetworkSettings = networkSettings;
         DialogResult = true;
     }

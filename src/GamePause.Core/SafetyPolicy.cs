@@ -9,6 +9,7 @@ public sealed class SafetyPolicy
         "fontdrvhost", "dwm", "sihost", "svchost", "conhost", "audiodg",
         "explorer", "taskhostw", "runtimebroker", "searchhost",
         "startmenuexperiencehost", "shellexperiencehost", "securityhealthservice",
+        "dynamicdependencylifetimemanagershadow", "douyin_tray",
         "gamepause", "gamepause.watchdog"
     };
 

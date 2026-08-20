@@ -81,6 +81,10 @@ public sealed record SuspensionSession(
     int Version,
     IReadOnlyList<SuspendedTarget> Targets);
 
-public sealed record OperationResult(bool Success, string Message, SuspensionSession? Session = null);
+public sealed record OperationResult(
+    bool Success,
+    string Message,
+    SuspensionSession? Session = null,
+    bool RequiresElevation = false);
 
 public sealed record KnownGame(string DisplayName, int SteamAppId, IReadOnlyList<string> ExpectedProcesses);

@@ -22,6 +22,7 @@ internal static class Program
 
         AppContext.SetSwitch("GamePause.DisableBackdrop", true);
         var application = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+        VerifyBlankImageGuard();
         var outputDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         var window = new MainWindow(true);
         window.Show();
@@ -54,7 +55,8 @@ internal static class Program
                 new GithubProxySetting(string.Empty, 8, true),
                 new GithubProxySetting("https://gh-proxy.org", 10),
                 new GithubProxySetting("https://example.com/github", 5)
-            ], "http://127.0.0.1:7890"));
+            ], "http://127.0.0.1:7890"),
+            true);
         settingsWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
         Render(settingsWindow, Path.Combine(outputDirectory, "settings-window-general-wpf.png"), 720, 610);
@@ -89,12 +91,15 @@ internal static class Program
         try
         {
             var store = new UiSettingsStore(directory);
-            if (store.Load().CloseToTrayNoticeShown) throw new InvalidOperationException("Default preference must be false.");
-            if (!store.Save(new UiSettings(true, "1.2.3")))
+            var defaults = store.Load();
+            if (defaults.CloseToTrayNoticeShown || defaults.DebugModeEnabled)
+                throw new InvalidOperationException("Default preferences must be false.");
+            if (!store.Save(new UiSettings(true, "1.2.3", DebugModeEnabled: true)))
                 throw new InvalidOperationException("UI settings could not be saved.");
             var reloaded = new UiSettingsStore(directory).Load();
             if (!reloaded.CloseToTrayNoticeShown) throw new InvalidOperationException("Saved preference was not reloaded.");
             if (reloaded.SkippedUpdateVersion != "1.2.3") throw new InvalidOperationException("Skipped update version was not reloaded.");
+            if (!reloaded.DebugModeEnabled) throw new InvalidOperationException("Debug mode was not reloaded.");
 
             var networkSettings = new UpdateNetworkSettings([
                 new GithubProxySetting("https://proxy-a.example", 10),
@@ -241,7 +246,8 @@ internal static class Program
                 throw new InvalidOperationException("Saved hotkey settings were not reloaded.");
             }
             var startupArguments = StartupTaskService.BuildCreateArguments("C:\\Game Pause\\GamePause.exe");
-            if (!startupArguments.Contains("HIGHEST")
+            if (!startupArguments.Contains("LIMITED")
+                || startupArguments.Contains("HIGHEST")
                 || !startupArguments.Any(argument => argument.Contains("--silent", StringComparison.Ordinal)))
             {
                 throw new InvalidOperationException("Startup task arguments are incomplete.");
@@ -301,15 +307,63 @@ internal static class Program
     {
         window.Width = width;
         window.Height = height;
-        window.UpdateLayout();
+        window.Dispatcher.Invoke(() =>
+        {
+            window.InvalidateVisual();
+            window.UpdateLayout();
+        }, DispatcherPriority.Render);
+        if (!window.IsLoaded || System.Windows.PresentationSource.FromVisual(window) is null)
+            throw new InvalidOperationException($"Window '{window.GetType().Name}' is not connected to a presentation source.");
+        if (window.ActualWidth <= 0 || window.ActualHeight <= 0)
+            throw new InvalidOperationException($"Window '{window.GetType().Name}' has invalid render dimensions.");
+
         var dpi = VisualTreeHelper.GetDpi(window);
         var pixelWidth = (int)Math.Ceiling(window.ActualWidth * dpi.DpiScaleX);
         var pixelHeight = (int)Math.Ceiling(window.ActualHeight * dpi.DpiScaleY);
         var bitmap = new RenderTargetBitmap(pixelWidth, pixelHeight, dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
         bitmap.Render(window);
+        EnsureImageIsNotBlank(bitmap, window.GetType().Name);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(path);
         encoder.Save(stream);
+    }
+
+    private static void EnsureImageIsNotBlank(BitmapSource bitmap, string windowName)
+    {
+        var stride = bitmap.PixelWidth * 4;
+        var pixels = new byte[stride * bitmap.PixelHeight];
+        bitmap.CopyPixels(pixels, stride, 0);
+
+        var sampled = 0;
+        var visibleNonBlack = 0;
+        for (var pixel = 0; pixel < bitmap.PixelWidth * bitmap.PixelHeight; pixel += 16)
+        {
+            var offset = pixel * 4;
+            sampled++;
+            if (pixels[offset + 3] > 16
+                && pixels[offset] + pixels[offset + 1] + pixels[offset + 2] > 48)
+            {
+                visibleNonBlack++;
+            }
+        }
+
+        if (visibleNonBlack < Math.Max(1, sampled / 100))
+            throw new InvalidOperationException($"Window '{windowName}' rendered as a blank or black image.");
+    }
+
+    private static void VerifyBlankImageGuard()
+    {
+        var bitmap = BitmapSource.Create(32, 32, 96, 96, PixelFormats.Pbgra32, null, new byte[32 * 32 * 4], 32 * 4);
+        try
+        {
+            EnsureImageIsNotBlank(bitmap, "BlankGuardSelfTest");
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("The visual QA blank-image guard accepted a black image.");
     }
 }

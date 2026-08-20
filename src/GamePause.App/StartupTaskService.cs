@@ -36,7 +36,7 @@ internal static class StartupTaskService
     [
         "/Create", "/TN", TaskName,
         "/TR", $"\"{executablePath}\" --silent",
-        "/SC", "ONLOGON", "/RL", "HIGHEST", "/F"
+        "/SC", "ONLOGON", "/RL", "LIMITED", "/F"
     ];
 
     private static (int ExitCode, string Output) Run(IEnumerable<string> arguments)

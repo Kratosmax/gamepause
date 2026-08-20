@@ -1,6 +1,6 @@
 # Game Pause
 
-Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.1.4**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
+Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.2.0**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
 
 本项目只面向单机游戏或明确可暂停的本地进程，不注入游戏、不修改游戏内存数据，也不尝试绕过反作弊。
 
@@ -25,7 +25,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 
 - Windows 10 或 Windows 11，64 位。
 - Lite 版要求系统已安装 `.NET 8 Desktop Runtime x64`；Full 版不需要单独安装运行库。
-- 主程序需要管理员权限，以操作同等或较低权限的目标进程。
+- 主程序默认使用普通权限；目标进程拒绝访问时才询问并以管理员身份重启。
 - Windows 11 22H2 及以上可显示完整系统背景材质；Windows 10 自动使用浅色回退主题。
 
 ### 启动程序
@@ -33,7 +33,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 1. 推荐从 [GitHub Releases](https://github.com/Kratosmax/gamepause/releases) 按上表选择 Full 或 Lite 安装版。两种安装版均支持自动更新。
 2. 也可以下载对应 ZIP 免安装版并完整解压；保持 `GamePause.exe`、`GamePause.Watchdog.exe`、`GamePause.Updater.exe` 和 `distribution-channel.txt` 位于同一目录。1.1.1 起安装版和免安装版均可自动更新。
 3. 启动 `GamePause.exe`。
-4. Game Pause 会检查管理员权限。权限不足时请选择“以管理员身份启动”，再确认 Windows 用户账户控制提示；选择“取消”会直接退出，不会在权限不足的状态下继续运行。
+4. Game Pause 默认以普通权限启动。普通游戏无需用户账户控制提示；只有目标进程拒绝访问时，才会询问是否以管理员身份重启。取消后程序保持普通权限运行。
 5. 程序只允许一个实例运行。重复启动时会提示检查系统托盘并退出。
 
 关闭主窗口不会退出程序，而是转入系统托盘。第一次关闭时会提示一次，后续静默进入托盘。需要彻底退出时，请使用托盘菜单中的退出命令。
@@ -67,7 +67,8 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 统一设置窗口提供：
 
 - 自定义暂停/恢复快捷键和紧急恢复快捷键；保存前通过 Windows 全局热键注册结果检查冲突。
-- 开机启动及静默进入托盘。启用后会创建最高权限的 Windows 登录计划任务 `GamePause.AutoStart`。
+- 开机启动及静默进入托盘。启用后会创建普通权限的 Windows 登录计划任务 `GamePause.AutoStart`；受限目标仍按需提权。
+- Debug 模式。默认关闭；开启后日志会记录进程树、父子 PID 和程序路径，供兼容性诊断使用。
 - 多条 GitHub 加速地址及优先级。内置的“GitHub 直连”线路不可删除，也可单独设为 `0` 禁用；线路按优先级从 10 到 1 依次尝试，同优先级保持列表顺序。
 - 可选的 HTTP 网络代理。它与 GitHub 加速地址相互独立，并同时作用于更新清单和安装包下载；当前不保存代理账号或密码。
 - 当前版本号、后台自动检查更新和手动检查更新入口。
@@ -97,7 +98,7 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 | `profiles.json` | 游戏收藏、路径、暂停模式和自动规则 |
 | `profiles.json.bak` | 游戏档案冗余备份，主文件损坏时自动读取 |
 | `settings.json` | 自定义快捷键 |
-| `ui-settings.json` | 关闭到托盘提醒、跳过的更新版本、GitHub 加速线路及 HTTP 网络代理 |
+| `ui-settings.json` | 关闭到托盘提醒、Debug 模式、跳过的更新版本、GitHub 加速线路及 HTTP 网络代理 |
 | `active-session.json` | 当前暂停目标的恢复记录，全部恢复后删除 |
 | `active-session.json.tmp` | 恢复记录写入过程中的临时文件 |
 | `active-session.json.bak` | 恢复记录的冗余备份 |
@@ -112,6 +113,8 @@ Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版
 ### 安全边界与已知限制
 
 - 已知系统关键进程和反作弊组件会被阻止，但兼容性检测不是绝对保证。
+- 受保护节点的整个子树都会排除，避免因父子关系误冻结 Windows 运行时或壳层辅助进程。
+- 有目标处于稳定暂停状态时，独立 Watchdog 会探测 Windows 任务栏响应；连续无响应会自动恢复本程序暂停的全部目标。
 - 不支持绕过反作弊；不要尝试暂停在线竞技游戏或反作弊服务。
 - 当前只恢复由本程序暂停并记录的进程，不扫描其他工具暂停的目标。
 - 深度暂停不保证全部内存立即写入页面文件，也不是 Steam Deck/整机休眠式的跨重启快照。
@@ -174,17 +177,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 脚本会先执行构建、核心测试和更新器自测，再生成四种产物：
 
 ```text
-temp\release\GamePause-1.1.4-Full-Setup.exe
-temp\release\GamePause-1.1.4-Lite-Setup.exe
-temp\release\GamePause-1.1.4-Full.zip
-temp\release\GamePause-1.1.4-Lite.zip
+temp\release\GamePause-1.2.0-Full-Setup.exe
+temp\release\GamePause-1.2.0-Lite-Setup.exe
+temp\release\GamePause-1.2.0-Full.zip
+temp\release\GamePause-1.2.0-Lite.zip
 ```
 
-对应的展开目录为 `GamePause-1.1.4-Full\` 和 `GamePause-1.1.4-Lite\`。Full 使用 `win-x64` 自包含发布并保留全部框架语言资源；Lite 使用框架依赖发布，不随包附带额外框架语言目录，程序现有中文界面和框架默认英文仍可用。发布脚本从 Lite 目录运行打包后更新器自测，后续本地包验证也应优先使用 Lite。发布目录中的三个可执行程序和 `distribution-channel.txt` 必须一起分发。
+对应的展开目录为 `GamePause-1.2.0-Full\` 和 `GamePause-1.2.0-Lite\`。Full 使用 `win-x64` 自包含发布并保留全部框架语言资源；Lite 使用框架依赖发布，不随包附带额外框架语言目录，程序现有中文界面和框架默认英文仍可用。发布脚本从 Lite 目录运行打包后更新器自测，后续本地包验证也应优先使用 Lite。发布目录中的三个可执行程序和 `distribution-channel.txt` 必须一起分发。
 
 ### 发布与自动更新
 
-推送与项目版本一致的标签（例如 `v1.1.4`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成四种 Windows x64 发行包、编译安装包、签名双通道更新清单，并创建 GitHub Release。
+推送与项目版本一致的标签（例如 `v1.2.0`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成四种 Windows x64 发行包、编译安装包、签名双通道更新清单，并创建 GitHub Release。
 
 仓库必须配置 Actions Secret `GAMEPAUSE_UPDATE_PRIVATE_KEY`。它保存与客户端内置公钥对应的 RSA 私钥；不得写入源码、日志或 Release 资产。更新清单固定发布为：
 
@@ -274,7 +277,7 @@ dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
-dotnet .\temp\release\GamePause-1.1.4-Lite\GamePause.Updater.dll --self-test
+dotnet .\temp\release\GamePause-1.2.0-Lite\GamePause.Updater.dll --self-test
 ```
 
 检查四个发行文件均存在，Lite 目录不含 `coreclr.dll` 且通道标记为 `lite`，Full 目录包含 `coreclr.dll` 且通道标记为 `full`。

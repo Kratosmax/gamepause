@@ -21,6 +21,10 @@ var tests = new (string Name, Action Run)[]
 {
     ("Safety policy protects Windows and Game Pause processes", TestSafetyPolicy),
     ("Suspend orders children before parent and persists state", TestSuspendOrder),
+    ("Suspend excludes protected process branches", TestProtectedProcessBranch),
+    ("Shell failure tracker requires consecutive failures and resets", TestShellFailureTracker),
+    ("Watchdog recovery refuses an in-progress pause transaction", TestWatchdogStableRecovery),
+    ("Access denied requests on-demand elevation", TestAccessDeniedRequiresElevation),
     ("Suspend rejects a root identity whose PID was reused", TestStaleRootIdentity),
     ("Resume orders parent before children and clears state", TestResumeOrder),
     ("Recovery skips planned processes that were never submitted to Windows", TestPlannedProcessOwnership),
@@ -42,7 +46,8 @@ var tests = new (string Name, Action Run)[]
     ("Update version policy accepts only newer semantic versions", TestUpdateVersionPolicy),
     ("Update manifests accept valid signatures and reject invalid signatures", TestUpdateManifestSignature),
     ("Compressed assembly versions are read from non-seekable ZIP streams", TestCompressedAssemblyVersionRead),
-    ("Diagnostic logs rotate before exceeding their size limit", TestDiagnosticLogRotation)
+    ("Diagnostic logs rotate before exceeding their size limit", TestDiagnosticLogRotation),
+    ("Detailed process-tree logs require Debug mode", TestDebugProcessTreeLogging)
 };
 
 var failures = 0;
@@ -69,6 +74,8 @@ static void TestSafetyPolicy()
     Assert(policy.IsProtected(4, "anything"), "PID 4 must be protected.");
     Assert(policy.IsProtected(100, "lsass.exe"), "lsass must be protected.");
     Assert(policy.IsProtected(101, "GamePause.exe"), "the app must be protected.");
+    Assert(policy.IsProtected(102, "douyin_tray.exe"), "Douyin's shell-facing tray process must be protected.");
+    Assert(policy.IsProtected(103, "DynamicDependencyLifetimeManagerShadow.exe"), "Windows App Runtime DDLM must be protected.");
     Assert(!policy.IsProtected(4242, "sample-game.exe"), "a normal game should be allowed.");
 }
 
@@ -81,6 +88,68 @@ static void TestSuspendOrder()
     var stored = fixture.Store.Load();
     Assert(stored is not null, "Recovery state must exist while paused.");
     Assert(stored!.Targets.Single().Processes.All(item => item.State == SuspensionState.Suspended), "All states should be suspended.");
+    var log = File.ReadAllText(fixture.Store.LogFilePath);
+    Assert(log.Contains("Pause process tree for sample-game.exe (100); 3 process(es).", StringComparison.Ordinal),
+        "The planned process tree summary must be written to the diagnostic log.");
+    Assert(log.Contains("depth=2; pid=102; parent=101; name=worker.exe; path=C:\\Games\\worker.exe", StringComparison.Ordinal),
+        "The process tree log must include identity and ownership details.");
+}
+
+static void TestProtectedProcessBranch()
+{
+    using var fixture = new Fixture();
+    var result = fixture.Service.SuspendTree(fixture.Root(300));
+    Assert(result.Success, result.Message);
+    AssertSequence(fixture.NativeApi.Suspended, [303, 300]);
+    var processes = fixture.Store.Load()!.Targets.Single().Processes;
+    Assert(processes.Select(process => process.Identity.ProcessId).SequenceEqual([303, 300]),
+        "The protected tray process and its Windows runtime child must be excluded from the session.");
+    var log = File.ReadAllText(fixture.Store.LogFilePath);
+    Assert(log.Contains("name=douyin_tray.exe", StringComparison.Ordinal)
+           && log.Contains("name=DynamicDependencyLifetimeManagerShadow.exe", StringComparison.Ordinal),
+        "Safety exclusions must be recorded for field diagnostics.");
+}
+
+static void TestShellFailureTracker()
+{
+    var tracker = new ShellFailureTracker(2);
+    Assert(!tracker.Observe(false, false), "Shell failures must be ignored without a completed pause session.");
+    Assert(tracker.ConsecutiveFailures == 0, "An inactive monitor must reset its failure count.");
+    Assert(!tracker.Observe(true, false), "One failed shell probe must not trigger recovery.");
+    Assert(tracker.ConsecutiveFailures == 1, "The first failed probe must be retained.");
+    Assert(!tracker.Observe(true, true), "A responsive probe must not trigger recovery.");
+    Assert(tracker.ConsecutiveFailures == 0, "A responsive probe must reset the failure count.");
+    Assert(!tracker.Observe(true, false), "The first consecutive failure must wait.");
+    Assert(tracker.Observe(true, false), "The second consecutive failure must trigger recovery.");
+    Assert(tracker.ConsecutiveFailures == 0, "A triggered recovery must reset the failure count.");
+}
+
+static void TestWatchdogStableRecovery()
+{
+    using var fixture = new Fixture();
+    var root = fixture.Root(100);
+    var child = fixture.Catalog.GetProcessTree(100).Single(process => process.ProcessId == 101);
+    fixture.Store.Save(new SuspensionSession(2,
+        [new SuspendedTarget(Guid.NewGuid(), DateTimeOffset.Now, "Sample", 100,
+        [
+            new SessionProcess(root, SuspensionState.Suspended),
+            new SessionProcess(child, SuspensionState.Planned)
+        ])]));
+
+    var result = fixture.Service.ResumeActiveSessionIfStable();
+    Assert(!result.Success, "Watchdog recovery must refuse a pause transaction that is still being committed.");
+    Assert(fixture.NativeApi.Resumed.Count == 0, "An in-progress pause transaction must not receive a resume call.");
+    Assert(fixture.Store.Load() is not null, "Refusing watchdog recovery must preserve the recovery session.");
+}
+
+static void TestAccessDeniedRequiresElevation()
+{
+    using var fixture = new Fixture();
+    fixture.NativeApi.AccessDeniedProcessIds.UnionWith([100, 101, 102]);
+    var result = fixture.Service.SuspendTree(fixture.Root(100));
+    Assert(!result.Success, "A fully denied tree must not report success.");
+    Assert(result.RequiresElevation, "A fully denied tree must request on-demand elevation.");
+    Assert(fixture.Store.Load() is null, "A fully denied tree must not leave a recovery session.");
 }
 
 static void TestStaleRootIdentity()
@@ -419,6 +488,26 @@ static void TestDiagnosticLogRotation()
     }
 }
 
+static void TestDebugProcessTreeLogging()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "GamePauseDebugLogTests", Guid.NewGuid().ToString("N"));
+    try
+    {
+        var store = new SessionStore(directory);
+        var root = new ProcessIdentity(10, 1, 0, "sample.exe", "C:\\Games\\sample.exe", 10);
+        store.LogProcessTree("Selection preview", root, [root]);
+        Assert(!File.Exists(store.LogFilePath), "Detailed process-tree logs must be disabled by default.");
+        store.DebugLoggingEnabled = true;
+        store.LogProcessTree("Selection preview", root, [root]);
+        Assert(File.ReadAllText(store.LogFilePath).Contains("path=C:\\Games\\sample.exe", StringComparison.Ordinal),
+            "Debug mode must write process-tree identity details.");
+    }
+    finally
+    {
+        if (Directory.Exists(directory)) Directory.Delete(directory, true);
+    }
+}
+
 static WindowProcessInfo[] SampleWindowProcesses() =>
 [
     new(101, "notepad", "notes.txt", 1024, false),
@@ -461,6 +550,7 @@ sealed class Fixture : IDisposable
         Catalog = new FakeCatalog();
         NativeApi = new FakeNativeApi();
         Store = new SessionStore(_directory);
+        Store.DebugLoggingEnabled = true;
         Service = new ProcessSuspensionService(Catalog, NativeApi, new SafetyPolicy(), Store);
     }
 
@@ -496,10 +586,23 @@ sealed class FakeCatalog : IProcessCatalog
         new(201, 200, 1, "second-worker.exe", "C:\\Games\\second-worker.exe", 2001)
     ];
 
+    private readonly ProcessIdentity[] _protectedBranchTree =
+    [
+        new(300, 0, 0, "douyin.exe", "D:\\Apps\\douyin.exe", 3000),
+        new(301, 300, 1, "douyin_tray.exe", "D:\\Apps\\tray\\douyin_tray.exe", 3001),
+        new(302, 301, 2, "DynamicDependencyLifetimeManagerShadow.exe", "C:\\Program Files\\WindowsApps\\DDLM.exe", 3002),
+        new(303, 300, 1, "douyin.exe", "D:\\Apps\\douyin.exe", 3003)
+    ];
+
     public HashSet<int> InvalidProcessIds { get; } = [];
 
     public ProcessIdentity? GetForegroundProcess() => _tree[0];
-    public IReadOnlyList<ProcessIdentity> GetProcessTree(int rootProcessId) => rootProcessId == 200 ? _secondTree : _tree;
+    public IReadOnlyList<ProcessIdentity> GetProcessTree(int rootProcessId) => rootProcessId switch
+    {
+        200 => _secondTree,
+        300 => _protectedBranchTree,
+        _ => _tree
+    };
     public IReadOnlyList<WindowProcessInfo> GetWindowProcesses() => [];
     public IReadOnlyList<string> GetRunningProcessNames() => [];
     public bool IsSameProcess(ProcessIdentity identity) => !InvalidProcessIds.Contains(identity.ProcessId);
@@ -512,10 +615,15 @@ sealed class FakeNativeApi : IProcessNativeApi
     public HashSet<int> SuspendedProcessIds { get; } = [];
     public List<int> Trimmed { get; } = [];
     public HashSet<int> TrimFailures { get; } = [];
+    public HashSet<int> AccessDeniedProcessIds { get; } = [];
 
     public void Suspend(ProcessIdentity identity)
     {
         var processId = identity.ProcessId;
+        if (AccessDeniedProcessIds.Contains(processId))
+        {
+            throw new System.ComponentModel.Win32Exception(5, "Access denied.");
+        }
         Suspended.Add(processId);
         SuspendedProcessIds.Add(processId);
     }
