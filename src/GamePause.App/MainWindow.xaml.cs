@@ -1058,7 +1058,6 @@ public partial class MainWindow : System.Windows.Window
 
         _updateCheckInProgress = true;
         _manualUpdateCheckRequested = userInitiated;
-        var updateAccepted = false;
         var effectiveNetworkSettings = (networkSettings ?? _uiSettings.EffectiveUpdateNetwork).Normalize();
         try
         {
@@ -1078,69 +1077,39 @@ public partial class MainWindow : System.Windows.Window
             if (!shouldReportResult
                 && string.Equals(_uiSettings.SkippedUpdateVersion, update.Version, StringComparison.OrdinalIgnoreCase)) return;
 
-            var dialog = new UpdatePromptWindow(UpdateService.CurrentVersionText, update.Version, update.ReleaseNotes)
+            var dialog = new UpdatePromptWindow(
+                UpdateService.CurrentVersionText,
+                update.Version,
+                update.ReleaseNotes,
+                (progress, cancellationToken) => DownloadAndLaunchUpdateAsync(
+                    update, effectiveNetworkSettings, progress, cancellationToken),
+                exception =>
+                {
+                    _store.Log($"Automatic update failed: {exception.Message}");
+                    SetStatus($"自动更新失败：{exception.Message}", StateTone.Error);
+                })
             {
                 Owner = dialogOwner
             };
             dialog.ShowDialog();
+            if (dialog.InstallLaunched)
+            {
+                _allowExit = true;
+                Close();
+                return;
+            }
             if (dialog.Selection == UpdatePromptSelection.Later) return;
             if (dialog.Selection == UpdatePromptSelection.Skip)
             {
                 _uiSettings = _uiSettings with { SkippedUpdateVersion = update.Version };
                 _uiSettingsStore.Save(_uiSettings);
                 SetStatus($"已跳过版本 {update.Version}。", StateTone.Neutral);
-                return;
             }
-
-            updateAccepted = true;
-
-            _ = _suspensionService.ActiveSession;
-            if (_store.LastLoadError is not null)
-            {
-                WpfMessageBox.Show(
-                    _store.LastLoadError + "\n\n无法确认暂停状态，因此本次更新已取消。请先重启 Windows。",
-                    "无法安全更新", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
-                return;
-            }
-
-            if ((_suspensionService.ActiveSession?.Targets.Count ?? 0) > 0)
-            {
-                var answer = WpfMessageBox.Show(
-                    "更新前必须恢复当前暂停的所有程序。是否立即恢复并继续更新？",
-                    "准备更新", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
-                    System.Windows.MessageBoxResult.No);
-                if (answer != System.Windows.MessageBoxResult.Yes) return;
-                var resumeResult = await Task.Run(_suspensionService.ResumeActiveSession);
-                if (!resumeResult.Success)
-                {
-                    WpfMessageBox.Show(resumeResult.Message, "无法安全更新", System.Windows.MessageBoxButton.OK,
-                        System.Windows.MessageBoxImage.Error);
-                    RefreshAllLists();
-                    return;
-                }
-            }
-
-            SetStatus($"正在下载版本 {update.Version}...", StateTone.Neutral);
-            var package = await UpdateService.DownloadAndPrepareAsync(update, effectiveNetworkSettings);
-            if (!UpdateService.LaunchUpdater(package))
-            {
-                SetStatus("无法启动自动更新器，更新已取消。", StateTone.Error);
-                return;
-            }
-
-            _allowExit = true;
-            Close();
         }
         catch (Exception exception)
         {
             _store.Log($"Update check failed: {exception.Message}");
-            if (updateAccepted)
-            {
-                SetStatus($"自动更新失败：{exception.Message}", StateTone.Error);
-                WpfMessageBox.Show($"自动更新失败，当前版本未被替换。\n\n{exception.Message}", "更新失败",
-                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
-            }
-            else if (_manualUpdateCheckRequested)
+            if (_manualUpdateCheckRequested)
             {
                 var checkMessage = exception is HttpRequestException or TaskCanceledException
                     ? $"无法连接服务器：{UpdateService.ManifestUrl}"
@@ -1155,6 +1124,49 @@ public partial class MainWindow : System.Windows.Window
             _updateCheckInProgress = false;
             _manualUpdateCheckRequested = false;
         }
+    }
+
+    private async Task<bool> DownloadAndLaunchUpdateAsync(
+        UpdateManifest update,
+        UpdateNetworkSettings networkSettings,
+        IProgress<UpdateDownloadProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = _suspensionService.ActiveSession;
+        if (_store.LastLoadError is not null)
+        {
+            WpfMessageBox.Show(
+                _store.LastLoadError + "\n\n无法确认暂停状态，因此本次更新已取消。请先重启 Windows。",
+                "无法安全更新", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            return false;
+        }
+
+        if ((_suspensionService.ActiveSession?.Targets.Count ?? 0) > 0)
+        {
+            var answer = WpfMessageBox.Show(
+                "更新前必须恢复当前暂停的所有程序。是否立即恢复并继续更新？",
+                "准备更新", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
+                System.Windows.MessageBoxResult.No);
+            if (answer != System.Windows.MessageBoxResult.Yes) return false;
+            var resumeResult = await Task.Run(_suspensionService.ResumeActiveSession, cancellationToken);
+            if (!resumeResult.Success)
+            {
+                WpfMessageBox.Show(resumeResult.Message, "无法安全更新", System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Error);
+                RefreshAllLists();
+                return false;
+            }
+        }
+
+        SetStatus($"正在下载版本 {update.Version}...", StateTone.Neutral);
+        var package = await UpdateService.DownloadAndPrepareAsync(
+            update, networkSettings, progress, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!UpdateService.LaunchUpdater(package))
+            throw new InvalidOperationException("无法启动自动更新器，可能已取消管理员权限请求。");
+
+        return true;
     }
 
     private bool TryApplyHotkeySettings(HotkeySettings settings)

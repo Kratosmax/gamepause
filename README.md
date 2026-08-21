@@ -1,6 +1,6 @@
 # Game Pause
 
-Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.2.1**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
+Game Pause 是一个面向 Windows 10/11 的游戏进程暂停工具，当前版本为 **1.2.2**。它可以批量暂停和恢复进程树，并提供游戏档案、自动规则、全局快捷键、托盘控制、异常恢复记录和独立守护进程。
 
 本项目只面向单机游戏或明确可暂停的本地进程，不注入游戏、不修改游戏内存数据，也不尝试绕过反作弊。
 
@@ -177,17 +177,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
 脚本会先执行构建、核心测试和更新器自测，再生成四种产物：
 
 ```text
-temp\release\GamePause-1.2.1-Full-Setup.exe
-temp\release\GamePause-1.2.1-Lite-Setup.exe
-temp\release\GamePause-1.2.1-Full.zip
-temp\release\GamePause-1.2.1-Lite.zip
+temp\release\GamePause-1.2.2-Full-Setup.exe
+temp\release\GamePause-1.2.2-Lite-Setup.exe
+temp\release\GamePause-1.2.2-Full.zip
+temp\release\GamePause-1.2.2-Lite.zip
 ```
 
-对应的展开目录为 `GamePause-1.2.1-Full\` 和 `GamePause-1.2.1-Lite\`。Full 使用 `win-x64` 自包含发布并保留全部框架语言资源；Lite 使用框架依赖发布，不随包附带额外框架语言目录，程序现有中文界面和框架默认英文仍可用。发布脚本从 Lite 目录运行打包后更新器自测，后续本地包验证也应优先使用 Lite。发布目录中的三个可执行程序和 `distribution-channel.txt` 必须一起分发。
+对应的展开目录为 `GamePause-1.2.2-Full\` 和 `GamePause-1.2.2-Lite\`。Full 使用 `win-x64` 自包含发布并保留全部框架语言资源；Lite 使用框架依赖发布，不随包附带额外框架语言目录，程序现有中文界面和框架默认英文仍可用。发布脚本从 Lite 目录运行打包后更新器自测，后续本地包验证也应优先使用 Lite。发布目录中的三个可执行程序和 `distribution-channel.txt` 必须一起分发。
 
 ### 发布与自动更新
 
-推送与项目版本一致的标签（例如 `v1.2.1`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成四种 Windows x64 发行包、编译安装包、签名双通道更新清单，并创建 GitHub Release。
+推送与项目版本一致的标签（例如 `v1.2.2`）会触发 `.github/workflows/release.yml`。工作流会运行完整测试、生成四种 Windows x64 发行包、编译安装包、签名双通道更新清单，并创建 GitHub Release。
 
 仓库必须配置 Actions Secret `GAMEPAUSE_UPDATE_PRIVATE_KEY`。它保存与客户端内置公钥对应的 RSA 私钥；不得写入源码、日志或 Release 资产。更新清单固定发布为：
 
@@ -277,7 +277,7 @@ dotnet run --project temp\visual-qa\VisualQa.csproj --configuration Release
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
-dotnet .\temp\release\GamePause-1.2.1-Lite\GamePause.Updater.dll --self-test
+dotnet .\temp\release\GamePause-1.2.2-Lite\GamePause.Updater.dll --self-test
 ```
 
 检查四个发行文件均存在，Lite 目录不含 `coreclr.dll` 且通道标记为 `lite`，Full 目录包含 `coreclr.dll` 且通道标记为 `full`。

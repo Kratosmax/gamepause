@@ -67,10 +67,27 @@ internal static class Program
         settingsWindow.Close();
 
         var updateWindow = new UpdatePromptWindow("1.1.3", "1.2.0",
-            "新增自动更新支持。\n修复进程暂停恢复稳定性问题。");
+            "新增自动更新支持。\n\n修复进程暂停恢复稳定性问题，并改进下载线路失败后的提示。\n下载完成后会校验签名、哈希、版本、通道和包结构。");
         updateWindow.Show();
         application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-        Render(updateWindow, Path.Combine(outputDirectory, "update-window-wpf.png"), 510, 310);
+        Render(updateWindow, Path.Combine(outputDirectory, "update-window-wpf.png"), 560, 460);
+        updateWindow.ShowDownloadProgressForVisualQa(new UpdateDownloadProgress(
+            UpdateDownloadStage.Downloading,
+            "https://github.com/Kratosmax/gamepause/releases/download/v1.2.2/GamePause-1.2.2-Full.zip",
+            100L * 1024 * 1024,
+            100L * 1024 * 1024));
+        if (updateWindow.DownloadProgressValueForVisualQa != 99)
+            throw new InvalidOperationException("下载完成但尚未校验时，进度条不得显示 100%。");
+        updateWindow.ShowDownloadProgressForVisualQa(new UpdateDownloadProgress(
+            UpdateDownloadStage.Downloading,
+            "https://gh-proxy.example/https://github.com/Kratosmax/gamepause/releases/download/v1.2.0/GamePause-1.2.0-Full.zip",
+            42L * 1024 * 1024,
+            100L * 1024 * 1024,
+            2,
+            3));
+        application.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        Render(updateWindow, Path.Combine(outputDirectory, "update-download-wpf.png"), 560, 460);
+        Render(updateWindow, Path.Combine(outputDirectory, "update-download-wpf-minimum.png"), 500, 410);
         updateWindow.Close();
 
         var elevationWindow = new ElevationPromptWindow();
@@ -234,6 +251,37 @@ internal static class Program
                 }
             }
 
+            var progressEvents = new List<UpdateDownloadProgress>();
+            using (var source = new MemoryStream(new byte[10]))
+            using (var destination = new MemoryStream())
+            {
+                await UpdateService.CopyDownloadAsync(
+                    source, destination, 10, TimeSpan.FromSeconds(1), default,
+                    new CollectingProgress<UpdateDownloadProgress>(progressEvents.Add),
+                    "https://example.test/package.zip", 10, 1, 2);
+            }
+            var completedDownload = progressEvents.LastOrDefault(item => item.Stage == UpdateDownloadStage.Downloading);
+            if (completedDownload?.BytesDownloaded != 10 || completedDownload.TotalBytes != 10
+                || completedDownload.Attempt != 1 || completedDownload.TotalAttempts != 2)
+                throw new InvalidOperationException("Update byte progress was not reported accurately.");
+
+            using (var cancellation = new CancellationTokenSource())
+            using (var source = new MemoryStream(new byte[10]))
+            using (var destination = new MemoryStream())
+            {
+                cancellation.Cancel();
+                try
+                {
+                    await UpdateService.CopyDownloadAsync(
+                        source, destination, 10, TimeSpan.FromSeconds(1), cancellation.Token);
+                    throw new InvalidOperationException("A cancelled update download continued reading.");
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected.
+                }
+            }
+
             var updatesDirectory = Path.Combine(directory, "updates");
             Directory.CreateDirectory(Path.Combine(updatesDirectory, "old-version"));
             File.WriteAllText(Path.Combine(updatesDirectory, "old-version", "package.zip"), "old");
@@ -301,6 +349,11 @@ internal static class Program
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return 0;
         }
+    }
+
+    private sealed class CollectingProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     private static void Render(System.Windows.Window window, string path, int width, int height)

@@ -12,6 +12,15 @@ namespace GamePause.App;
 
 internal sealed record UpdateManifest(string Version, string DownloadUrl, string Sha256, string Signature, string? ReleaseNotes);
 internal sealed record PreparedUpdate(string Version, string PackagePath, string ExpectedSha256, string DownloadUrl, string Signature);
+internal enum UpdateDownloadStage { Connecting, RouteFailed, Downloading, VerifyingHash, VerifyingPackage, Ready }
+internal sealed record UpdateDownloadProgress(
+    UpdateDownloadStage Stage,
+    string RequestUrl,
+    long BytesDownloaded = 0,
+    long? TotalBytes = null,
+    int Attempt = 1,
+    int TotalAttempts = 1,
+    string? Error = null);
 
 internal static class UpdateService
 {
@@ -78,6 +87,7 @@ internal static class UpdateService
     internal static async Task<PreparedUpdate> DownloadAndPrepareAsync(
         UpdateManifest manifest,
         UpdateNetworkSettings? networkSettings = null,
+        IProgress<UpdateDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         var settings = (networkSettings ?? UpdateNetworkSettings.Default).Normalize();
@@ -90,36 +100,47 @@ internal static class UpdateService
         using var client = CreateClient(settings);
         Exception? lastError = null;
 
-        foreach (var requestUrl in BuildRequestUrls(manifest.DownloadUrl, settings))
+        var requestUrls = BuildRequestUrls(manifest.DownloadUrl, settings);
+        for (var index = 0; index < requestUrls.Count; index++)
         {
+            var requestUrl = requestUrls[index];
+            var attempt = index + 1;
+            progress?.Report(new UpdateDownloadProgress(
+                UpdateDownloadStage.Connecting, requestUrl, Attempt: attempt, TotalAttempts: requestUrls.Count));
             try
             {
                 using var response = await client.GetAsync(requestUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!response.IsSuccessStatusCode)
-                {
-                    lastError = CreateStatusException(requestUrl, response.StatusCode);
-                    continue;
-                }
+                    throw CreateStatusException(requestUrl, response.StatusCode);
                 if (response.Content.Headers.ContentLength is > MaxPackageBytes)
                     throw new InvalidDataException($"更新包超过 {MaxPackageBytes / 1024 / 1024} MB 安全上限：{requestUrl}");
+                var contentLength = response.Content.Headers.ContentLength;
                 await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
                 await using (var destination = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
-                    await CopyDownloadAsync(source, destination, MaxPackageBytes, DownloadStallTimeout, cancellationToken);
+                    await CopyDownloadAsync(source, destination, MaxPackageBytes, DownloadStallTimeout,
+                        cancellationToken, progress, requestUrl, contentLength, attempt, requestUrls.Count);
                     await destination.FlushAsync(cancellationToken);
                 }
 
+                progress?.Report(new UpdateDownloadProgress(
+                    UpdateDownloadStage.VerifyingHash, requestUrl, Attempt: attempt, TotalAttempts: requestUrls.Count));
                 var actualHash = await ComputeSha256Async(temporaryPath, cancellationToken);
                 if (!string.Equals(actualHash, manifest.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException($"下载文件的 SHA-256 校验失败：{requestUrl}");
 
+                progress?.Report(new UpdateDownloadProgress(
+                    UpdateDownloadStage.VerifyingPackage, requestUrl, Attempt: attempt, TotalAttempts: requestUrls.Count));
                 ValidatePackage(temporaryPath, manifest.Version);
                 File.Move(temporaryPath, packagePath, true);
+                progress?.Report(new UpdateDownloadProgress(
+                    UpdateDownloadStage.Ready, requestUrl, Attempt: attempt, TotalAttempts: requestUrls.Count));
                 return new PreparedUpdate(manifest.Version, packagePath, manifest.Sha256,
                     manifest.DownloadUrl, manifest.Signature);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                TryDelete(temporaryPath);
                 throw;
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException
@@ -127,6 +148,9 @@ internal static class UpdateService
             {
                 lastError = exception;
                 TryDelete(temporaryPath);
+                progress?.Report(new UpdateDownloadProgress(
+                    UpdateDownloadStage.RouteFailed, requestUrl, Attempt: attempt,
+                    TotalAttempts: requestUrls.Count, Error: exception.Message));
             }
         }
 
@@ -211,13 +235,20 @@ internal static class UpdateService
         Stream destination,
         long maxBytes,
         TimeSpan stallTimeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<UpdateDownloadProgress>? progress = null,
+        string requestUrl = "",
+        long? expectedBytes = null,
+        int attempt = 1,
+        int totalAttempts = 1)
     {
         if (maxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxBytes));
         if (stallTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(stallTimeout));
 
         var buffer = new byte[81920];
         long totalBytes = 0;
+        progress?.Report(new UpdateDownloadProgress(
+            UpdateDownloadStage.Downloading, requestUrl, totalBytes, expectedBytes, attempt, totalAttempts));
         using var stallCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         while (true)
         {
@@ -241,6 +272,8 @@ internal static class UpdateService
             if (totalBytes > maxBytes)
                 throw new InvalidDataException($"更新包超过 {maxBytes / 1024 / 1024} MB 安全上限。");
             await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            progress?.Report(new UpdateDownloadProgress(
+                UpdateDownloadStage.Downloading, requestUrl, totalBytes, expectedBytes, attempt, totalAttempts));
         }
     }
 
