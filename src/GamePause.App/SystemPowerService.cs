@@ -1,9 +1,23 @@
 using System.Diagnostics;
+using Microsoft.Win32;
 
 namespace GamePause.App;
 
 internal static class SystemPowerService
 {
+    internal static bool IsHibernateEnabled()
+    {
+        try
+        {
+            using var powerKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Power", writable: false);
+            return powerKey?.GetValue("HibernateEnabled") is int value && value == 1;
+        }
+        catch (Exception exception) when (exception is System.Security.SecurityException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     internal static (bool Success, string Message) EnableFullHibernate()
     {
         var enable = RunPowerCfg("/hibernate", "on");

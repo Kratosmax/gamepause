@@ -195,6 +195,11 @@ public partial class MainWindow : System.Windows.Window
             return;
         }
 
+        var hibernateEnabled = SystemPowerService.IsHibernateEnabled();
+        HibernateButton.Visibility = hibernateEnabled
+            ? System.Windows.Visibility.Visible
+            : System.Windows.Visibility.Collapsed;
+        _store.Log($"System hibernation availability at startup: {hibernateEnabled}.");
         _store.Log("WPF main window shown.");
         var recovery = _suspensionService.ReconcileActiveSession();
         SetStatus(recovery.Message, !recovery.Success ? StateTone.Error
@@ -340,7 +345,18 @@ public partial class MainWindow : System.Windows.Window
     private void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => ApplyProcessFilter();
     private void ForegroundOnlyCheck_Changed(object sender, System.Windows.RoutedEventArgs e) => ApplyProcessFilter();
     private void HotkeyButton_Click(object sender, System.Windows.RoutedEventArgs e) => RunUiTask(OpenSettingsAsync);
-    private void HibernateButton_Click(object sender, System.Windows.RoutedEventArgs e) => HibernateComputer();
+    private void HibernateButton_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (!SystemPowerService.IsHibernateEnabled())
+        {
+            HibernateButton.Visibility = System.Windows.Visibility.Collapsed;
+            SetStatus("Windows 休眠未启用，已隐藏整机休眠。", StateTone.Warning);
+            _store.Log("System hibernation request ignored because hibernation is disabled.");
+            return;
+        }
+
+        HibernateComputer();
+    }
     private void AddProfileButton_Click(object sender, System.Windows.RoutedEventArgs e) => AddProfileFromCheckedProcess();
     private void EditProfileButton_Click(object sender, System.Windows.RoutedEventArgs e) => EditSelectedProfile();
     private void DeleteProfileButton_Click(object sender, System.Windows.RoutedEventArgs e) => DeleteSelectedProfile();

@@ -169,7 +169,7 @@
                     <TextBlock Text="批量暂停单机游戏进程，并可靠恢复" Foreground="{StaticResource MutedBrush}" Margin="1,4,0,0" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
-                    <Button Content="整机休眠" Background="#5C54D6" Style="{StaticResource FlatButtonStyle}"
+                    <Button x:Name="HibernateButton" Content="整机休眠" Background="#5C54D6" Style="{StaticResource FlatButtonStyle}"
                             Width="112" Click="HibernateButton_Click" />
                     <Button Content="设置" Style="{StaticResource SecondaryButtonStyle}"
                             Width="122" Margin="10,0,0,0" Click="HotkeyButton_Click" />
